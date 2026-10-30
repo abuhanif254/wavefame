@@ -30,12 +30,9 @@ export function Footer() {
     <footer className="border-t border-white/5 px-5 py-8">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 text-sm text-slate-500 sm:flex-row">
         <Logo />
-        <div className="flex items-center gap-4 text-xs">
-          <span>© {new Date().getFullYear()} {BRAND_NAME}. Uploaded files auto-delete after 24 hours.</span>
-          <Link href="/admin" className="text-slate-600 hover:text-slate-400 transition underline">
-            Founder Admin
-          </Link>
-        </div>
+        <p className="text-xs text-slate-500">
+          © {new Date().getFullYear()} {BRAND_NAME}. Uploaded files auto-delete after 24 hours.
+        </p>
       </div>
     </footer>
   );

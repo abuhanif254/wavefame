@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   CheckCircle2,
@@ -10,7 +10,6 @@ import {
   Loader2,
   Lock,
   Phone,
-  ShieldCheck,
   Sparkles,
   Ticket,
   Wallet,
@@ -22,14 +21,10 @@ import { PRICING_PLANS, formatBdt, getPlan } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/lib/auth/authStore";
 import { useStudioStore } from "@/store/useStudioStore";
+import type { PlatformPaymentSettings } from "@/lib/settings";
 
 type Tab = "checkout" | "promo";
 type Step = "choose" | "submitting" | "pending_submitted" | "success";
-
-const WALLET_NUMBERS: Record<PaymentProvider, { number: string; type: string; color: string }> = {
-  bkash: { number: "01712-345678", type: "Personal", color: "#E2136E" },
-  nagad: { number: "01912-345678", type: "Personal", color: "#F6921E" },
-};
 
 const PROVIDERS: ReadonlyArray<{ id: PaymentProvider; name: string; active: string }> = [
   { id: "bkash", name: "bKash", active: "border-[#E2136E] bg-[#E2136E]/10 ring-1 ring-[#E2136E]/50" },
@@ -60,14 +55,35 @@ export function UnlockModal() {
   const [errorMsg, setErrorMsg] = useState("");
   const [copiedNumber, setCopiedNumber] = useState(false);
 
+  // Dynamic Payment Settings from /admin
+  const [paymentSettings, setPaymentSettings] = useState<PlatformPaymentSettings>({
+    bkashNumber: "01712-345678",
+    bkashType: "Personal",
+    nagadNumber: "01912-345678",
+    nagadType: "Personal",
+    singlePriceBdt: 120,
+    creatorPackPriceBdt: 499,
+  });
+
   const plan = getPlan(planId);
-  const providerInfo = WALLET_NUMBERS[provider];
+  const activeNumber = provider === "bkash" ? paymentSettings.bkashNumber : paymentSettings.nagadNumber;
+  const activeType = provider === "bkash" ? paymentSettings.bkashType : paymentSettings.nagadType;
 
   useEffect(() => {
     if (isOpen) {
       setStep("choose");
       setErrorMsg("");
       setPromoMessage(null);
+
+      // Fetch dynamic active recipient numbers from /api/settings
+      fetch("/api/settings")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && data.bkashNumber) {
+            setPaymentSettings(data);
+          }
+        })
+        .catch(() => {});
     }
   }, [isOpen]);
 
@@ -143,19 +159,7 @@ export function UnlockModal() {
     }
   };
 
-  // 3. Dev Quick Unlock (for immediate verification in preview)
-  const handleDevQuickUnlock = () => {
-    if (!project.isUnlocked) {
-      toggleUnlocked();
-    }
-    if (planId === "creator_pack") {
-      addCredits(5);
-    }
-    startRender();
-    setStep("success");
-  };
-
-  // 4. Promo Code Redemption
+  // 3. Promo Code Redemption
   const handleRedeemPromo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!promoCodeInput.trim()) return;
@@ -178,12 +182,11 @@ export function UnlockModal() {
         throw new Error(data.error || "Failed to redeem code.");
       }
 
-      // Add credits to user
       await addCredits(data.creditsAdded || 1);
       setPromoMessage({ text: data.message || `Granted +${data.creditsAdded} credits!`, error: false });
       setPromoCodeInput("");
     } catch (err: unknown) {
-      setPromoMessage({ text: (err as Error)?.message || "Invalid promo code", error: true });
+      setPromoMessage({ text: (err as Error)?.message || "Invalid or expired promotional code.", error: true });
     } finally {
       setIsRedeemingPromo(false);
     }
@@ -271,7 +274,7 @@ export function UnlockModal() {
           </div>
         )}
 
-        {/* Tab 1: Checkout (Instant Credit + bKash/Nagad) */}
+        {/* Tab 1: Checkout */}
         {activeTab === "checkout" && (
           <div className="relative p-6 space-y-6">
             {step === "choose" && (
@@ -381,31 +384,40 @@ export function UnlockModal() {
                         )}
                       >
                         <PaymentBadge provider={p.id} />
-                        <span className="text-xs font-mono text-slate-400">Direct Send</span>
+                        <span className="text-xs font-mono text-slate-400">
+                          {p.id === "bkash" ? paymentSettings.bkashType : paymentSettings.nagadType}
+                        </span>
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {/* 4. Payment Instructions Box */}
+                {/* 4. Payment Instructions Box with Dynamic Number & Type */}
                 <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5 text-xs">
-                  <div className="font-semibold text-slate-200">
-                    Payment Instructions ({provider.toUpperCase()} Send Money):
+                  <div className="font-semibold text-slate-200 flex items-center justify-between">
+                    <span>
+                      {provider.toUpperCase()} ({activeType}):
+                    </span>
+                    <span className="text-[10px] font-mono text-indigo-400">Official Recipient</span>
                   </div>
                   <ol className="list-decimal space-y-1.5 pl-4 text-slate-400">
                     <li>
                       Open your <strong className="text-white">{provider.toUpperCase()} app</strong> and tap{" "}
-                      <strong className="text-white">Send Money</strong>.
+                      <strong className="text-white">
+                        {activeType === "Merchant" ? "Payment / Make Payment" : "Send Money"}
+                      </strong>
+                      .
                     </li>
                     <li className="flex items-center gap-2">
-                      <span>Send to:</span>
+                      <span>Recipient:</span>
                       <code className="rounded bg-slate-900 px-2 py-0.5 font-mono text-white font-semibold">
-                        {providerInfo.number}
+                        {activeNumber}
                       </code>
                       <button
                         type="button"
-                        onClick={() => copyToClipboard(providerInfo.number)}
+                        onClick={() => copyToClipboard(activeNumber)}
                         className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
+                        title="Copy number"
                       >
                         {copiedNumber ? "Copied!" : <Copy className="h-3 w-3" />}
                       </button>
@@ -418,7 +430,7 @@ export function UnlockModal() {
                   </ol>
                 </div>
 
-                {/* 5. TrxID Submission Form */}
+                {/* 5. TrxID Submission Form (No bypass buttons) */}
                 <form onSubmit={handleSubmitPayment} className="space-y-3">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
@@ -462,18 +474,6 @@ export function UnlockModal() {
                   >
                     Submit {formatBdt(plan.priceBdt)} TrxID for Verification
                   </button>
-
-                  {/* Dev mode immediate bypass */}
-                  <div className="pt-2 text-center">
-                    <button
-                      type="button"
-                      onClick={handleDevQuickUnlock}
-                      className="text-[11px] text-slate-500 hover:text-slate-300 underline"
-                      title="For instant developer testing without waiting for DB approval"
-                    >
-                      ⚡ Instant Dev Preview Unlock (Bypass TrxID)
-                    </button>
-                  </div>
                 </form>
               </>
             )}
@@ -505,20 +505,12 @@ export function UnlockModal() {
                   <code className="text-white">WF-{project.id.slice(0, 6)}</code>
                 </div>
 
-                <div className="flex justify-center gap-3">
-                  <button
-                    onClick={handleDevQuickUnlock}
-                    className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
-                  >
-                    Simulate Admin Approval (Dev)
-                  </button>
-                  <button
-                    onClick={close}
-                    className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-                  >
-                    Close
-                  </button>
-                </div>
+                <button
+                  onClick={close}
+                  className="rounded-xl bg-slate-800 px-5 py-2 text-xs font-semibold text-white hover:bg-slate-700 transition"
+                >
+                  Close
+                </button>
               </div>
             )}
 
@@ -542,7 +534,7 @@ export function UnlockModal() {
           </div>
         )}
 
-        {/* Tab 2: Promo Code Flow */}
+        {/* Tab 2: Promo Code Flow (No public hints) */}
         {activeTab === "promo" && (
           <div className="p-6 space-y-4">
             <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 text-xs text-slate-300">
@@ -551,7 +543,7 @@ export function UnlockModal() {
                 Redeem Promo / Partner Code
               </div>
               <p className="mt-1 text-slate-400">
-                Enter your voucher or beta access code to instantly claim video credits for your account.
+                Enter your voucher or partner access code to claim video credits for your account.
               </p>
             </div>
 
@@ -576,7 +568,7 @@ export function UnlockModal() {
                   required
                   value={promoCodeInput}
                   onChange={(e) => setPromoCodeInput(e.target.value)}
-                  placeholder="e.g. LAUNCH2026 or CREATORVIP"
+                  placeholder="Enter promo voucher (e.g. WF-PARTNER)"
                   className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2.5 text-xs font-mono uppercase text-white placeholder-slate-600 outline-none transition focus:border-indigo-500"
                 />
               </div>
@@ -589,12 +581,6 @@ export function UnlockModal() {
                 {isRedeemingPromo ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply Promo Code"}
               </button>
             </form>
-
-            <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-[11px] text-slate-500">
-              <span className="font-semibold text-slate-400">Try demo codes: </span>
-              <code className="text-indigo-400">LAUNCH2026</code> (+1 Credit),{" "}
-              <code className="text-indigo-400">CREATORVIP</code> (+5 Credits)
-            </div>
           </div>
         )}
       </div>

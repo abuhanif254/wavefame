@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { verifyAdminRequest } from "@/lib/auth/adminGuard";
 
 export async function GET(req: Request) {
+  const auth = verifyAdminRequest(req);
+  if (!auth.authorized) {
+    return NextResponse.json({ error: auth.error || "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const { searchParams } = new URL(req.url);
     const statusFilter = searchParams.get("status");
@@ -125,6 +131,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const auth = verifyAdminRequest(req);
+  if (!auth.authorized) {
+    return NextResponse.json({ error: auth.error || "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const { paymentId, action, notes } = await req.json();
 

@@ -14,6 +14,7 @@ import { DEMO_PROJECT_TITLE, generateMockScenes } from "@/lib/mock-data";
 import { getPlan } from "@/lib/pricing";
 import { findSceneIndexAtTime } from "@/lib/timeline";
 import { clamp } from "@/lib/utils";
+import type { CaptionStyle } from "@/lib/typography";
 import { sfxEngine } from "@/services/sfxEngine";
 
 /* ------------------------------------------------------------------ */
@@ -36,6 +37,8 @@ export interface StudioState {
   isExportModalOpen: boolean;
   isApiSettingsOpen: boolean;
   isSfxMuted: boolean;
+  isBgmMuted: boolean;
+  captionStyle: CaptionStyle;
   geminiApiKey: string;
 
   analysisProgress: number;
@@ -51,6 +54,9 @@ export interface StudioState {
   openExportModal: () => void;
   closeExportModal: () => void;
   toggleSfxMute: () => void;
+  toggleBgmMute: () => void;
+  setCaptionStyle: (style: CaptionStyle) => void;
+  cycleCaptionStyle: () => void;
 
   // Studio operations
   renameProject: (title: string) => void;
@@ -134,6 +140,8 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
   isExportModalOpen: false,
   isApiSettingsOpen: false,
   isSfxMuted: false,
+  isBgmMuted: false,
+  captionStyle: "youtube_yellow",
   geminiApiKey: getStoredApiKey(),
 
   analysisProgress: 0,
@@ -156,6 +164,20 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
   toggleSfxMute: () => {
     const nextMuted = sfxEngine.toggleMute();
     set({ isSfxMuted: nextMuted });
+  },
+
+  toggleBgmMute: () => {
+    const nextMuted = sfxEngine.toggleBgmMute();
+    set({ isBgmMuted: nextMuted });
+  },
+
+  setCaptionStyle: (style) => set({ captionStyle: style }),
+
+  cycleCaptionStyle: () => {
+    const cur = get().captionStyle;
+    const styles: CaptionStyle[] = ["youtube_yellow", "classic", "minimal_glass"];
+    const nextIdx = (styles.indexOf(cur) + 1) % styles.length;
+    set({ captionStyle: styles[nextIdx] });
   },
 
   renameProject: (title) => set((s) => ({ project: { ...s.project, title } })),
@@ -204,11 +226,22 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     set({ currentTime: time, selectedSceneId: sceneId });
   },
 
-  setPlaying: (playing) => set({ isPlaying: playing }),
+  setPlaying: (playing) => {
+    if (playing) {
+      sfxEngine.startBgm(true);
+      sfxEngine.duckBgm(true);
+    } else {
+      sfxEngine.stopBgm();
+    }
+    set({ isPlaying: playing });
+  },
 
   togglePlay: () => {
     const { isPlaying, project, currentTime } = get();
-    if (isPlaying) return set({ isPlaying: false });
+    if (isPlaying) {
+      sfxEngine.stopBgm();
+      return set({ isPlaying: false });
+    }
     if (project.status === "analyzing" || project.scenes.length === 0) return;
 
     const limit = getPlayableLimit(project);
@@ -216,6 +249,8 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
       if (!project.isUnlocked) return set({ isUnlockModalOpen: true });
       get().setCurrentTime(0);
     }
+    sfxEngine.startBgm(true);
+    sfxEngine.duckBgm(true);
     set({ isPlaying: true });
   },
 

@@ -136,12 +136,26 @@ export function ExportModal() {
             <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-indigo-500/15 ring-1 ring-indigo-400/30">
               <Loader2 className="h-7 w-7 animate-spin text-indigo-400" />
             </div>
-            <h3 className="text-base font-semibold text-white">
-              Rendering frames… {progress?.percent || 0}%
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              {exportMode === "master" ? "1080p Master (No Watermark)" : "Watermarked Preview"} · {formatClock(progress?.currentSec || 0)} / {formatClock(progress?.totalSec || 0)}
-            </p>
+
+            {progress?.stage === "preloading" ? (
+              <>
+                <h3 className="text-base font-semibold text-white">
+                  Step 1/2: Preloading High-Res Visual Assets ({progress.preloadCount || 0}/{progress.preloadTotal || 0})…
+                </h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  Pre-fetching 2x2 AI grids &amp; motion graphics into memory to prevent blank frames.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-base font-semibold text-white">
+                  Step 2/2: Rendering {exportMode === "master" ? "1080p Master Video" : "Video Preview"}… {progress?.percent || 0}%
+                </h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  {exportMode === "master" ? "1080p Master (No Watermark)" : "Watermarked Preview"} · {formatClock(progress?.currentSec || 0)} / {formatClock(progress?.totalSec || 0)}
+                </p>
+              </>
+            )}
 
             <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-slate-800">
               <div

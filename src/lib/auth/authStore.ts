@@ -21,7 +21,6 @@ interface AuthState {
   consumeFreeTrial: () => Promise<void>;
   deductCredit: (amount?: number) => Promise<boolean>;
   addCredits: (amount: number) => Promise<void>;
-  toggleDevAdminMode: () => void;
   refreshProfile: () => Promise<void>;
 }
 
@@ -35,7 +34,7 @@ function getLocalStoredUser(): UserProfile {
       full_name: "Demo Creator",
       credits: 0,
       has_used_free_trial: false,
-      is_admin: true, // Default to admin in local dev for seamless inspection
+      is_admin: false,
     };
   }
 
@@ -50,9 +49,9 @@ function getLocalStoredUser(): UserProfile {
     id: "usr_guest_" + Math.random().toString(36).substring(2, 9),
     email: "creator@waveframe.studio",
     full_name: "Waveframe Creator",
-    credits: 1, // Pre-gift 1 credit in dev preview to try instant unlock
+    credits: 0,
     has_used_free_trial: false,
-    is_admin: true,
+    is_admin: false,
   };
   localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(defaultUser));
   return defaultUser;
@@ -339,13 +338,5 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         .update({ credits: nextCredits, updated_at: new Date().toISOString() })
         .eq("id", cur.id);
     }
-  },
-
-  toggleDevAdminMode: () => {
-    const cur = get().user;
-    if (!cur) return;
-    const updated = { ...cur, is_admin: !cur.is_admin };
-    set({ user: updated });
-    saveLocalStoredUser(updated);
   },
 }));

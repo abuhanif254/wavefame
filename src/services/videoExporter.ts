@@ -5,13 +5,17 @@
 
 import type { ProjectState, SceneNode } from "@/types/studio";
 import { PREVIEW_LIMIT_SEC } from "@/lib/constants";
+import { isBengaliText } from "@/lib/typography";
 import { slugify } from "@/lib/utils";
+import { sceneHues } from "@/lib/visuals";
 
 export interface ExportProgress {
   percent: number;
   currentSec: number;
   totalSec: number;
-  stage: "rendering" | "encoding" | "complete" | "error";
+  stage: "preloading" | "rendering" | "encoding" | "complete" | "error";
+  preloadCount?: number;
+  preloadTotal?: number;
   error?: string;
 }
 
@@ -27,22 +31,97 @@ export interface VideoExportOptions {
 
 // Cached image elements for offscreen rendering
 const imageCache = new Map<string, HTMLImageElement>();
+const failedUrls = new Set<string>();
 
-function loadImage(url: string): Promise<HTMLImageElement | null> {
+function loadImageWithTimeout(url: string, timeoutMs = 6000): Promise<HTMLImageElement | null> {
   if (imageCache.has(url)) {
     const img = imageCache.get(url)!;
     if (img.complete && img.naturalWidth > 0) return Promise.resolve(img);
   }
+  if (failedUrls.has(url)) return Promise.resolve(null);
+
   return new Promise((resolve) => {
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        failedUrls.add(url);
+        resolve(null);
+      }
+    }, timeoutMs);
+
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      imageCache.set(url, img);
-      resolve(img);
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        imageCache.set(url, img);
+        resolve(img);
+      }
     };
-    img.onerror = () => resolve(null);
+    img.onerror = () => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        failedUrls.add(url);
+        resolve(null);
+      }
+    };
     img.src = url;
   });
+}
+
+function drawProceduralFallback(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  scene: SceneNode,
+  progress: number
+) {
+  const [h1, h2] = sceneHues(scene.index);
+  const cx = width / 2;
+  const cy = height / 2;
+
+  // Multi-stop radial background
+  const rad = ctx.createRadialGradient(cx, cy, width * 0.1, cx, cy, width * 0.7);
+  rad.addColorStop(0, `hsl(${h1}, 75%, 22%)`);
+  rad.addColorStop(0.65, `hsl(${h2}, 85%, 10%)`);
+  rad.addColorStop(1, "#020617");
+  ctx.fillStyle = rad;
+  ctx.fillRect(0, 0, width, height);
+
+  // Concentric animated rings
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.strokeStyle = `hsla(${h1}, 90%, 65%, 0.25)`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  const radius = width * 0.22 + Math.sin(progress * Math.PI) * 15;
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Futuristic crosshairs
+  ctx.strokeStyle = `hsla(${h2}, 90%, 65%, 0.18)`;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-width * 0.35, 0);
+  ctx.lineTo(width * 0.35, 0);
+  ctx.moveTo(0, -height * 0.35);
+  ctx.lineTo(0, height * 0.35);
+  ctx.stroke();
+  ctx.restore();
+
+  // Subtle grid overlay
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
+  ctx.lineWidth = 1;
+  const step = Math.round(width * 0.05);
+  for (let x = 0; x < width; x += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
 }
 
 /**
@@ -94,7 +173,7 @@ function drawSceneFrame(
     }
   }
 
-  // Draw background visual based on visualType
+  // Draw background visual based on visualType with Anti-Blank-Frame Guard
   const imgUrl = scene.gridMasterUrl || scene.previewUrl;
   const cachedImg = imgUrl ? imageCache.get(imgUrl) : null;
 
@@ -111,46 +190,8 @@ function drawSceneFrame(
       ctx.drawImage(cachedImg, 0, 0, width, height);
     }
   } else {
-    // Stylized gradient background
-    const grad = ctx.createLinearGradient(0, 0, width, height);
-    grad.addColorStop(0, "#0b0f19");
-    grad.addColorStop(0.5, "#1e1b4b");
-    grad.addColorStop(1, "#311042");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-
-    if (scene.visualType === "motion_graphic") {
-      // Draw motion graphic bar chart template
-      const barCount = 7;
-      const barWidth = width * 0.08;
-      const startX = width * 0.18;
-      const bottomY = height * 0.72;
-
-      for (let b = 0; b < barCount; b++) {
-        const hFactor = 0.3 + 0.5 * Math.sin(b * 1.2 + 1);
-        const curHeight = height * 0.45 * hFactor * Math.min(1, progress * 2.2);
-        const bx = startX + b * (barWidth * 1.5);
-        const by = bottomY - curHeight;
-
-        const bGrad = ctx.createLinearGradient(0, by, 0, bottomY);
-        bGrad.addColorStop(0, "#818cf8");
-        bGrad.addColorStop(1, "#4f46e5");
-        ctx.fillStyle = bGrad;
-        ctx.beginPath();
-        ctx.roundRect(bx, by, barWidth, curHeight, [6, 6, 0, 0]);
-        ctx.fill();
-      }
-    } else if (scene.visualType === "ai_grid_panel") {
-      // 2x2 grid outline
-      ctx.strokeStyle = "rgba(129, 140, 248, 0.3)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(width / 2, 0);
-      ctx.lineTo(width / 2, height);
-      ctx.moveTo(0, height / 2);
-      ctx.lineTo(width, height / 2);
-      ctx.stroke();
-    }
+    // Bulletproof Procedural Fallback Guard (Never blank or black)
+    drawProceduralFallback(ctx, width, height, scene, progress);
   }
 
   // Cinematic dark vignette overlay
@@ -162,31 +203,34 @@ function drawSceneFrame(
 
   ctx.restore(); // Restore camera transform
 
-  // 1. Kinetic On-Screen Text
+  // 1. Kinetic On-Screen Text with Bilingual Font Support
   if (scene.onScreenText) {
     const isKinetic = scene.visualType === "kinetic_text";
+    const isBangla = isBengaliText(scene.onScreenText);
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    const fontSize = isKinetic ? Math.round(width * 0.062) : Math.round(width * 0.038);
-    ctx.font = `900 ${fontSize}px sans-serif`;
+    const fontSize = isKinetic ? Math.round(width * 0.058) : Math.round(width * 0.035);
+    ctx.font = isBangla
+      ? `700 ${fontSize}px "Hind Siliguri", "Nirmala UI", sans-serif`
+      : `900 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
 
     const textY = isKinetic ? height * 0.48 : height * 0.68;
-    const text = scene.onScreenText.toUpperCase();
+    const text = isBangla ? scene.onScreenText : scene.onScreenText.toUpperCase();
 
     if (!isKinetic) {
       // Pill backdrop
       const metrics = ctx.measureText(text);
       const padX = width * 0.025;
-      const padY = height * 0.02;
+      const padY = height * 0.016;
       const rx = cx - metrics.width / 2 - padX;
       const ry = textY - fontSize / 2 - padY;
-      ctx.fillStyle = "rgba(2, 6, 23, 0.75)";
+      ctx.fillStyle = "rgba(2, 6, 23, 0.78)";
       ctx.beginPath();
       ctx.roundRect(rx, ry, metrics.width + padX * 2, fontSize + padY * 2, [10]);
       ctx.fill();
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
@@ -198,31 +242,39 @@ function drawSceneFrame(
     ctx.restore();
   }
 
-  // 2. Transcript Caption at bottom
+  // 2. High-Retention Bilingual Subtitles (Bold Yellow / Clean Contrast)
   if (scene.transcriptSegment) {
+    const isBangla = isBengaliText(scene.transcriptSegment);
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const capSize = Math.round(width * 0.019);
-    ctx.font = `500 ${capSize}px sans-serif`;
+    const capSize = Math.round(width * 0.02);
+    ctx.font = isBangla
+      ? `600 ${capSize}px "Hind Siliguri", "Nirmala UI", sans-serif`
+      : `800 ${capSize}px "Plus Jakarta Sans", sans-serif`;
 
     const capY = height * 0.92;
     const metrics = ctx.measureText(scene.transcriptSegment);
-    const padX = width * 0.02;
+    const padX = width * 0.022;
     const padY = height * 0.012;
 
-    ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.82)";
     ctx.beginPath();
     ctx.roundRect(
       cx - metrics.width / 2 - padX,
       capY - capSize / 2 - padY,
       metrics.width + padX * 2,
       capSize + padY * 2,
-      [6],
+      [8],
     );
     ctx.fill();
+    ctx.strokeStyle = "rgba(250, 204, 21, 0.4)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
 
-    ctx.fillStyle = "#f1f5f9";
+    ctx.fillStyle = "#facc15"; // High-retention yellow
+    ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
+    ctx.shadowBlur = 8;
     ctx.fillText(scene.transcriptSegment, cx, capY);
     ctx.restore();
   }
@@ -294,12 +346,44 @@ export async function exportStudioVideo({
     throw new Error("No scenes available to export.");
   }
 
-  // Pre-load images for all scenes in this export window
-  for (const sc of scenes) {
-    const url = sc.gridMasterUrl || sc.previewUrl;
-    if (url) {
-      void loadImage(url);
-    }
+  // Step 1/2: Pre-Flight Visual Asset Preloader
+  const uniqueUrls = Array.from(
+    new Set(scenes.map((s) => s.gridMasterUrl || s.previewUrl).filter(Boolean) as string[])
+  );
+
+  const totalAssets = uniqueUrls.length;
+  let loadedAssets = 0;
+
+  if (totalAssets > 0) {
+    onProgress?.({
+      percent: 0,
+      currentSec: 0,
+      totalSec: durationSec,
+      stage: "preloading",
+      preloadCount: 0,
+      preloadTotal: totalAssets,
+    });
+
+    await Promise.all(
+      uniqueUrls.map(async (url) => {
+        if (signal?.aborted) return;
+        try {
+          await loadImageWithTimeout(url, 6000);
+        } catch {
+          // Fallback guard handles missing visual
+        } finally {
+          loadedAssets++;
+          onProgress?.({
+            percent: Math.round((loadedAssets / totalAssets) * 100),
+            currentSec: 0,
+            totalSec: durationSec,
+            stage: "preloading",
+            preloadCount: loadedAssets,
+            preloadTotal: totalAssets,
+          });
+        }
+      })
+    );
   }
 
   const width = 1280;

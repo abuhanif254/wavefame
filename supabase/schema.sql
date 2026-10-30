@@ -317,7 +317,42 @@ CREATE POLICY "Only admins can modify promo codes"
   WITH CHECK (public.is_admin());
 
 -- ==============================================================================
--- 8. 24-HOUR AUTO-EXPIRY MAINTENANCE (POSTGRES / SUPABASE)
+-- 9. PLATFORM CONFIGURATION & DYNAMIC SETTINGS (PHASE 4)
+-- Allows the founder to dynamically update active bKash/Nagad numbers, payment types, and pricing from /admin.
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.platform_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.platform_settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow public read of platform settings"
+  ON public.platform_settings FOR SELECT
+  USING (true);
+
+CREATE POLICY "Allow admin write of platform settings"
+  ON public.platform_settings FOR ALL
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- Seed Initial Default Payment Settings
+INSERT INTO public.platform_settings (key, value)
+VALUES (
+  'payment_settings',
+  '{
+    "bkashNumber": "01712-345678",
+    "bkashType": "Personal",
+    "nagadNumber": "01912-345678",
+    "nagadType": "Personal",
+    "singlePriceBdt": 120,
+    "creatorPackPriceBdt": 499
+  }'::jsonb
+)
+-- ==============================================================================
+-- 10. 24-HOUR AUTO-EXPIRY MAINTENANCE (POSTGRES / SUPABASE)
 -- Can be called via pg_cron or Supabase Edge Function cron daily:
 -- SELECT public.cleanup_expired_projects();
 -- ==============================================================================
@@ -337,3 +372,4 @@ BEGIN
   RETURN v_deleted_count;
 END;
 $$;
+

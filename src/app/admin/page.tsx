@@ -16,14 +16,18 @@ import {
   Layers,
   Loader2,
   Lock,
+  LogOut,
   Plus,
   RefreshCw,
+  Save,
   Search,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Ticket,
   Users,
+  Wallet,
   X,
   XCircle,
 } from "lucide-react";
@@ -32,6 +36,7 @@ import { PaymentBadge } from "@/components/shared/PaymentBadge";
 import { formatBdt } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/lib/auth/authStore";
+import type { PlatformPaymentSettings } from "@/lib/settings";
 
 interface AdminPaymentItem {
   id: string;
@@ -55,11 +60,11 @@ interface AdminStats {
 }
 
 export default function AdminDashboardPage() {
-  const user = useAuthStore((s) => s.user);
-  const toggleDevAdminMode = useAuthStore((s) => s.toggleDevAdminMode);
+  const [adminToken, setAdminToken] = useState("");
+  const [secretInput, setSecretInput] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [authError, setAuthError] = useState("");
 
-  const [passcode, setPasscode] = useState("");
-  const [isPasscodeAuthenticated, setIsPasscodeAuthenticated] = useState(false);
   const [payments, setPayments] = useState<AdminPaymentItem[]>([]);
   const [stats, setStats] = useState<AdminStats>({
     totalRevenueBdt: 0,
@@ -67,11 +72,23 @@ export default function AdminDashboardPage() {
     activeProjectsCount: 0,
     usersCount: 0,
   });
-  const [activeTab, setActiveTab] = useState<"payments" | "projects" | "promo">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "settings" | "promo">("payments");
   const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Dynamic Payment Settings State
+  const [settingsForm, setSettingsForm] = useState<PlatformPaymentSettings>({
+    bkashNumber: "01712-345678",
+    bkashType: "Personal",
+    nagadNumber: "01912-345678",
+    nagadType: "Personal",
+    singlePriceBdt: 120,
+    creatorPackPriceBdt: 499,
+  });
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsMsg, setSettingsMsg] = useState<{ text: string; error?: boolean } | null>(null);
 
   // Promo code form state
   const [newPromoCode, setNewPromoCode] = useState("");
@@ -81,19 +98,33 @@ export default function AdminDashboardPage() {
   >([
     { code: "LAUNCH2026", credits: 1, maxUses: 500, usedCount: 42 },
     { code: "CREATORVIP", credits: 5, maxUses: 50, usedCount: 11 },
-    { code: "WAVE100", credits: 1, maxUses: 1000, usedCount: 88 },
   ]);
 
-  const isAdmin = user?.is_admin || isPasscodeAuthenticated;
+  // Check saved session token on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedToken = sessionStorage.getItem("waveframe_admin_token");
+      if (savedToken) {
+        setAdminToken(savedToken);
+      }
+    }
+  }, []);
 
-  const fetchAdminData = async () => {
+  const isAuthenticated = Boolean(adminToken);
+
+  const fetchAdminData = async (token = adminToken) => {
+    if (!token) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/payments?status=${filterStatus}`);
+      const res = await fetch(`/api/admin/payments?status=${filterStatus}`, {
+        headers: { "x-admin-key": token },
+      });
       if (res.ok) {
         const data = await res.json();
         setPayments(data.payments || []);
         if (data.stats) setStats(data.stats);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (err) {
       console.error("Failed to load admin data:", err);
@@ -102,20 +133,60 @@ export default function AdminDashboardPage() {
     }
   };
 
-  useEffect(() => {
-    if (isAdmin) {
-      fetchAdminData();
+  const fetchSettings = async (token = adminToken) => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/admin/settings", {
+        headers: { "x-admin-key": token },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSettingsForm(data);
+      }
+    } catch {
+      // ignore
     }
-  }, [isAdmin, filterStatus]);
+  };
 
-  const handlePasscodeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (passcode.toLowerCase() === "waveframe2026" || passcode === "admin") {
-      setIsPasscodeAuthenticated(true);
-      toggleDevAdminMode();
-    } else {
-      alert("Invalid admin passcode. Hint: waveframe2026");
+  useEffect(() => {
+    if (adminToken) {
+      fetchAdminData(adminToken);
+      fetchSettings(adminToken);
     }
+  }, [adminToken, filterStatus]);
+
+  const handleSecretSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!secretInput.trim()) return;
+    setIsVerifying(true);
+    setAuthError("");
+
+    try {
+      const res = await fetch("/api/admin/verify", {
+        method: "POST",
+        headers: { "x-admin-key": secretInput.trim() },
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Invalid Admin Secret Key.");
+      }
+
+      const validToken = secretInput.trim();
+      sessionStorage.setItem("waveframe_admin_token", validToken);
+      setAdminToken(validToken);
+      setSecretInput("");
+    } catch (err: unknown) {
+      setAuthError((err as Error)?.message || "Authentication failed.");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("waveframe_admin_token");
+    setAdminToken("");
+    setPayments([]);
   };
 
   const handlePaymentAction = async (paymentId: string, action: "approve" | "reject") => {
@@ -123,22 +194,49 @@ export default function AdminDashboardPage() {
     try {
       const res = await fetch("/api/admin/payments", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminToken,
+        },
         body: JSON.stringify({ paymentId, action }),
       });
 
       if (res.ok) {
-        // Update local list
         setPayments((prev) =>
           prev.map((p) => (p.id === paymentId ? { ...p, status: action === "approve" ? "approved" : "rejected" } : p))
         );
-        // Refresh counts
         fetchAdminData();
       }
     } catch (err) {
       console.error("Action error:", err);
     } finally {
       setActionLoadingId(null);
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingSettings(true);
+    setSettingsMsg(null);
+
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminToken,
+        },
+        body: JSON.stringify(settingsForm),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update settings");
+
+      setSettingsMsg({ text: "Wallet numbers and pricing updated across Waveframe Studio!", error: false });
+    } catch (err: unknown) {
+      setSettingsMsg({ text: (err as Error)?.message || "Update failed", error: true });
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -160,8 +258,8 @@ export default function AdminDashboardPage() {
     alert(`Promo code ${cleanCode} generated!`);
   };
 
-  // If not authenticated as Admin, show Security Gate
-  if (!isAdmin) {
+  // If not authenticated, show Production Security Gate
+  if (!isAuthenticated) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 p-4 text-white">
         <div className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-8 shadow-2xl text-center space-y-5">
@@ -169,45 +267,40 @@ export default function AdminDashboardPage() {
             <Lock className="h-7 w-7" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight">Founder's Revenue &amp; Admin Center</h1>
+            <h1 className="text-xl font-bold tracking-tight">Founder's Control Center</h1>
             <p className="mt-1 text-xs text-slate-400">
-              Restricted access. Enter your founder passphrase or enable developer admin access.
+              Restricted management area. Enter your verified <code className="text-indigo-300">ADMIN_SECRET_KEY</code> to access.
             </p>
           </div>
 
-          <form onSubmit={handlePasscodeSubmit} className="space-y-3">
+          {authError && (
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
+              {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleSecretSubmit} className="space-y-3">
             <input
               type="password"
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              placeholder="Admin passphrase (e.g. waveframe2026)"
+              required
+              value={secretInput}
+              onChange={(e) => setSecretInput(e.target.value)}
+              placeholder="Enter ADMIN_SECRET_KEY"
               className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
             />
             <button
               type="submit"
-              className="w-full rounded-xl bg-indigo-600 py-2.5 text-xs font-semibold text-white shadow hover:bg-indigo-500 transition"
+              disabled={isVerifying}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 text-xs font-semibold text-white shadow hover:bg-indigo-500 transition disabled:opacity-50"
             >
-              Authenticate &amp; Access Admin Portal
+              {isVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify Secret & Enter Admin"}
             </button>
           </form>
-
-          <div className="pt-2 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => {
-                setIsPasscodeAuthenticated(true);
-                toggleDevAdminMode();
-              }}
-              className="text-xs text-indigo-400 hover:text-indigo-300 font-medium underline"
-            >
-              ⚡ Instant 1-Click Dev Admin Bypass
-            </button>
-          </div>
 
           <div>
             <Link
               href="/studio"
-              className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300"
+              className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition"
             >
               <ArrowLeft className="h-3 w-3" />
               Return to Studio
@@ -227,17 +320,21 @@ export default function AdminDashboardPage() {
           <div className="h-5 w-px bg-slate-800" />
           <div className="flex items-center gap-2">
             <span className="font-semibold text-sm text-white">Founder's Control Center</span>
-            <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-bold text-violet-300 border border-violet-500/30">
-              LIVE REVENUE
+            <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+              <ShieldCheck className="h-3 w-3" />
+              AUTHENTICATED
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           <button
-            onClick={fetchAdminData}
+            onClick={() => {
+              fetchAdminData();
+              fetchSettings();
+            }}
             className="flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-            title="Refresh payments"
+            title="Refresh payments and settings"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
             <span>Refresh</span>
@@ -248,8 +345,17 @@ export default function AdminDashboardPage() {
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-            Open Studio
+            Studio
           </Link>
+
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 hover:border-rose-500/30 transition"
+            title="Lock and sign out of admin"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Lock</span>
+          </button>
         </div>
       </header>
 
@@ -329,6 +435,19 @@ export default function AdminDashboardPage() {
           </button>
 
           <button
+            onClick={() => setActiveTab("settings")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition",
+              activeTab === "settings"
+                ? "bg-indigo-600 text-white shadow"
+                : "bg-slate-900 text-slate-400 hover:text-white"
+            )}
+          >
+            <Settings className="h-3.5 w-3.5" />
+            Dynamic Wallet &amp; Pricing Settings
+          </button>
+
+          <button
             onClick={() => setActiveTab("promo")}
             className={cn(
               "flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition",
@@ -345,7 +464,6 @@ export default function AdminDashboardPage() {
         {/* Tab 1: Payments & TrxID Verification */}
         {activeTab === "payments" && (
           <div className="space-y-4">
-            {/* Filter buttons */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-slate-500 font-medium">Filter Status:</span>
@@ -366,11 +484,10 @@ export default function AdminDashboardPage() {
               </div>
 
               <div className="text-xs text-slate-500">
-                Tip: Approving unlocks the project in 1080p and credits the user wallet automatically.
+                Approving automatically unlocks the video project or credits the user account.
               </div>
             </div>
 
-            {/* Payments Table */}
             <div className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -502,13 +619,163 @@ export default function AdminDashboardPage() {
           </div>
         )}
 
-        {/* Tab 2: Promo Code Generator */}
+        {/* Tab 2: Dynamic Wallet & Pricing Settings */}
+        {activeTab === "settings" && (
+          <div className="max-w-2xl rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
+            <div>
+              <div className="flex items-center gap-2">
+                <Wallet className="h-5 w-5 text-indigo-400" />
+                <h3 className="font-semibold text-base text-white">Dynamic bKash &amp; Nagad Wallet Settings</h3>
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Update your live recipient phone numbers, payment collection mode, and pricing without redeploying code.
+              </p>
+            </div>
+
+            {settingsMsg && (
+              <div
+                className={cn(
+                  "rounded-xl border p-3 text-xs flex items-center gap-2",
+                  settingsMsg.error
+                    ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                )}
+              >
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{settingsMsg.text}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveSettings} className="space-y-5">
+              {/* bKash Config */}
+              <div className="rounded-xl border border-[#E2136E]/20 bg-[#E2136E]/5 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <PaymentBadge provider="bkash" />
+                  <span className="text-[11px] font-mono text-[#E2136E] font-medium">bKash Gateway</span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-300">Recipient Phone Number</label>
+                    <input
+                      type="text"
+                      required
+                      value={settingsForm.bkashNumber}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, bkashNumber: e.target.value })}
+                      placeholder="017XXXXXXXX"
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-mono text-white outline-none focus:border-[#E2136E]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-300">Payment Type</label>
+                    <select
+                      value={settingsForm.bkashType}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, bkashType: e.target.value as "Personal" | "Merchant" })
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-[#E2136E]"
+                    >
+                      <option value="Personal">Personal (Send Money)</option>
+                      <option value="Merchant">Merchant (Make Payment)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Nagad Config */}
+              <div className="rounded-xl border border-[#F6921E]/20 bg-[#F6921E]/5 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <PaymentBadge provider="nagad" />
+                  <span className="text-[11px] font-mono text-[#F6921E] font-medium">Nagad Gateway</span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-300">Recipient Phone Number</label>
+                    <input
+                      type="text"
+                      required
+                      value={settingsForm.nagadNumber}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, nagadNumber: e.target.value })}
+                      placeholder="019XXXXXXXX"
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-mono text-white outline-none focus:border-[#F6921E]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-300">Payment Type</label>
+                    <select
+                      value={settingsForm.nagadType}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, nagadType: e.target.value as "Personal" | "Merchant" })
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-[#F6921E]"
+                    >
+                      <option value="Personal">Personal (Send Money)</option>
+                      <option value="Merchant">Merchant (Make Payment)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pricing in BDT */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-3">
+                <div className="font-semibold text-xs text-slate-200">Video Plan Pricing (BDT)</div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-400">
+                      Single Video Pass Price (৳)
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min={10}
+                      value={settingsForm.singlePriceBdt}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, singlePriceBdt: Number(e.target.value) || 120 })
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-400">
+                      5-Video Creator Pack Price (৳)
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min={50}
+                      value={settingsForm.creatorPackPriceBdt}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, creatorPackPriceBdt: Number(e.target.value) || 499 })
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={savingSettings}
+                className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 px-6 py-2.5 text-xs font-bold text-white shadow hover:brightness-110 disabled:opacity-50 transition"
+              >
+                {savingSettings ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Platform Payment Settings
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Tab 3: Promo Code Generator */}
         {activeTab === "promo" && (
           <div className="grid md:grid-cols-3 gap-6">
             <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-indigo-400" />
-                <h3 className="font-semibold text-sm text-white">Generate Promo Voucher</h3>
+                <h3 className="font-semibold text-sm text-white">Issue Promo Voucher</h3>
               </div>
               <p className="text-xs text-slate-400">
                 Create partnership, promotion, or support compensation codes that grant free video credits.

@@ -27,6 +27,8 @@ function PlayerControls() {
   const isUnlocked = useStudioStore((s) => s.project.isUnlocked);
   const isSfxMuted = useStudioStore((s) => s.isSfxMuted);
   const toggleSfxMute = useStudioStore((s) => s.toggleSfxMute);
+  const isBgmMuted = useStudioStore((s) => s.isBgmMuted);
+  const toggleBgmMute = useStudioStore((s) => s.toggleBgmMute);
   const togglePlay = useStudioStore((s) => s.togglePlay);
   const stepScene = useStudioStore((s) => s.stepScene);
   const setCurrentTime = useStudioStore((s) => s.setCurrentTime);
@@ -75,6 +77,22 @@ function PlayerControls() {
           >
             {isSfxMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5 text-cyan-300" />}
             <span>SFX</span>
+          </button>
+
+          {/* Web Audio Ambient BGM Auto-Ducked Toggle */}
+          <button
+            onClick={toggleBgmMute}
+            aria-label={isBgmMuted ? "Unmute ambient background music" : "Mute ambient background music"}
+            title={isBgmMuted ? "Enable cinematic ambient soundtrack" : "Disable ambient soundtrack"}
+            className={cn(
+              "ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition",
+              isBgmMuted
+                ? "border border-slate-700 bg-slate-900 text-slate-500"
+                : "border border-violet-400/40 bg-violet-500/10 text-violet-300",
+            )}
+          >
+            <Music className="h-3.5 w-3.5" />
+            <span>BGM</span>
           </button>
         </div>
 

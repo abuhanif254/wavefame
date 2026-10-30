@@ -4,6 +4,8 @@ import { useState, type CSSProperties } from "react";
 import type { SceneNode } from "@/types/studio";
 import { SCENE_DURATION_SEC } from "@/lib/constants";
 import { gradient, hash, sceneGradient, sceneHues } from "@/lib/visuals";
+import { CAPTION_STYLES, isBengaliText, getFontFamilyForText } from "@/lib/typography";
+import { cn } from "@/lib/utils";
 import { useStudioStore } from "@/store/useStudioStore";
 
 const QUADRANT_POSITIONS: Record<0 | 1 | 2 | 3, { pos: string; label: string }> = {
@@ -264,6 +266,9 @@ interface SceneCanvasProps {
  */
 export function SceneCanvas({ scene, isPlaying }: SceneCanvasProps) {
   const isUnlocked = useStudioStore((s) => s.project.isUnlocked);
+  const captionStyle = useStudioStore((s) => s.captionStyle);
+  const cycleCaptionStyle = useStudioStore((s) => s.cycleCaptionStyle);
+
   const duration = Math.max(0.5, scene.endTime - scene.startTime) || SCENE_DURATION_SEC;
   const cameraStyle: CSSProperties = {
     animationDuration: `${duration}s`,
@@ -273,13 +278,19 @@ export function SceneCanvas({ scene, isPlaying }: SceneCanvasProps) {
   const isKinetic = scene.visualType === "kinetic_text";
   const restartKey = `${scene.id}-${scene.visualType}-${scene.cameraEffect}-${isPlaying}`;
 
+  // Bilingual detection (Bangla vs English)
+  const isBanglaTitle = isBengaliText(scene.onScreenText);
+  const isBanglaCaption = isBengaliText(scene.transcriptSegment);
+
+  const curCaptionConfig = CAPTION_STYLES[captionStyle] || CAPTION_STYLES.youtube_yellow;
+
   return (
     <div className="absolute inset-0 overflow-hidden bg-slate-950">
       <div key={restartKey} className={`cam cam-${scene.cameraEffect} absolute inset-0`} style={cameraStyle}>
         <VisualLayer scene={scene} />
       </div>
 
-      {/* Kinetic on-screen text (not affected by the camera move) */}
+      {/* Kinetic on-screen text (not affected by the camera move) with Bangla font shaping */}
       {scene.onScreenText && (
         <div
           className={
@@ -290,13 +301,25 @@ export function SceneCanvas({ scene, isPlaying }: SceneCanvasProps) {
         >
           <div
             key={`${scene.id}-${isPlaying}`}
-            className="animate-text-pop text-balance text-center font-black uppercase leading-[1.05] tracking-tight text-white [text-shadow:0_4px_30px_rgba(0,0,0,0.7)]"
-            style={{ fontSize: isKinetic ? "clamp(20px, 7.5cqw, 88px)" : "clamp(14px, 4.2cqw, 52px)" }}
+            className={cn(
+              "animate-text-pop text-balance text-center font-black [text-shadow:0_4px_30px_rgba(0,0,0,0.85)]",
+              isBanglaTitle
+                ? "font-['Hind_Siliguri',sans-serif] leading-[1.3] tracking-normal"
+                : "font-['Plus_Jakarta_Sans',sans-serif] uppercase leading-[1.05] tracking-tight"
+            )}
+            style={{
+              fontSize: isKinetic
+                ? "clamp(20px, 7.5cqw, 88px)"
+                : isBanglaTitle
+                ? "clamp(15px, 4.0cqw, 48px)"
+                : "clamp(14px, 4.2cqw, 52px)",
+              fontFamily: getFontFamilyForText(scene.onScreenText),
+            }}
           >
             {isKinetic ? (
               scene.onScreenText
             ) : (
-              <span className="rounded-[0.6cqw] border border-white/10 bg-slate-950/70 px-[1.6cqw] py-[0.6cqw] backdrop-blur-md">
+              <span className="rounded-[0.6cqw] border border-white/10 bg-slate-950/75 px-[1.6cqw] py-[0.6cqw] backdrop-blur-md text-white">
                 {scene.onScreenText}
               </span>
             )}
@@ -304,15 +327,34 @@ export function SceneCanvas({ scene, isPlaying }: SceneCanvasProps) {
         </div>
       )}
 
-      {/* Transcript caption */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-[3%] flex justify-center px-[6%]">
-        <span
-          className="max-w-full truncate rounded-[0.5cqw] border border-white/10 bg-black/70 px-[1.2cqw] py-[0.4cqw] text-slate-100 backdrop-blur-md"
-          style={{ fontSize: "clamp(9px, 1.6cqw, 18px)" }}
-        >
-          {scene.transcriptSegment}
-        </span>
-      </div>
+      {/* High-Retention Dynamic Subtitles Bar */}
+      {scene.transcriptSegment && (
+        <div className="absolute inset-x-0 bottom-[3.2%] flex justify-center px-[6%] z-10">
+          <div
+            onClick={cycleCaptionStyle}
+            title={`Caption Style: ${curCaptionConfig.label} (Click to switch)`}
+            className={cn(
+              "cursor-pointer group flex items-center gap-2 max-w-[92%] rounded-[0.6cqw] px-[1.4cqw] py-[0.45cqw] transition-all hover:scale-[1.02] backdrop-blur-md",
+              curCaptionConfig.containerClass
+            )}
+            style={{ fontFamily: getFontFamilyForText(scene.transcriptSegment) }}
+          >
+            <span
+              className={cn(
+                "truncate",
+                curCaptionConfig.textClass,
+                isBanglaCaption ? "leading-[1.4] tracking-normal" : "leading-snug"
+              )}
+              style={{ fontSize: "clamp(10px, 1.8cqw, 20px)" }}
+            >
+              {scene.transcriptSegment}
+            </span>
+            <span className="hidden group-hover:inline-block rounded bg-white/20 px-1 text-[0.8cqw] font-mono text-white/80">
+              Style ⟳
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Semi-transparent Watermark overlay on locked preview */}
       {!isUnlocked && (

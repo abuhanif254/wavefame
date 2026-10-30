@@ -8,7 +8,11 @@ import type { SoundEffect } from "@/types/studio";
 
 let audioCtx: AudioContext | null = null;
 let isSfxMuted = false;
+let isBgmMuted = false;
 let masterGain: GainNode | null = null;
+let bgmGain: GainNode | null = null;
+let bgmNodes: { osc1: OscillatorNode; osc2: OscillatorNode; osc3: OscillatorNode; lfo: OscillatorNode } | null = null;
+let isBgmPlaying = false;
 
 function getContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -198,10 +202,87 @@ function synthCinematicHit(ctx: AudioContext, dest: AudioNode, volume = 0.85) {
 }
 
 /**
- * Public SFX Service
+ * 5. Procedural Cinematic Ambient Pad & Pulse (Netflix/Documentary style)
+ */
+function startProceduralBgm(ctx: AudioContext, dest: AudioNode, isDucked = false) {
+  if (bgmNodes || isBgmMuted) return;
+
+  const t0 = ctx.currentTime;
+  bgmGain = ctx.createGain();
+  bgmGain.gain.setValueAtTime(0.001, t0);
+  bgmGain.gain.linearRampToValueAtTime(isDucked ? 0.05 : 0.10, t0 + 1.5);
+  bgmGain.connect(dest);
+
+  // Warm chord oscillators (C minor cinematic pad)
+  const osc1 = ctx.createOscillator();
+  osc1.type = "sine";
+  osc1.frequency.setValueAtTime(130.81, t0); // C3
+
+  const osc2 = ctx.createOscillator();
+  osc2.type = "triangle";
+  osc2.frequency.setValueAtTime(155.56, t0); // Eb3
+
+  const osc3 = ctx.createOscillator();
+  osc3.type = "sine";
+  osc3.frequency.setValueAtTime(196.00, t0); // G3
+
+  // Warm low-pass filter with slow breathing LFO
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(360, t0);
+  filter.Q.value = 1.6;
+
+  const lfo = ctx.createOscillator();
+  lfo.type = "sine";
+  lfo.frequency.setValueAtTime(0.12, t0); // slow breathing sweep
+
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.setValueAtTime(90, t0);
+
+  lfo.connect(lfoGain);
+  lfoGain.connect(filter.frequency);
+
+  osc1.connect(filter);
+  osc2.connect(filter);
+  osc3.connect(filter);
+  filter.connect(bgmGain);
+
+  osc1.start(t0);
+  osc2.start(t0);
+  osc3.start(t0);
+  lfo.start(t0);
+
+  bgmNodes = { osc1, osc2, osc3, lfo };
+  isBgmPlaying = true;
+}
+
+function stopProceduralBgm(ctx: AudioContext) {
+  if (!bgmNodes || !bgmGain) return;
+  const t0 = ctx.currentTime;
+  try {
+    bgmGain.gain.linearRampToValueAtTime(0.001, t0 + 0.6);
+    setTimeout(() => {
+      bgmNodes?.osc1.stop();
+      bgmNodes?.osc2.stop();
+      bgmNodes?.osc3.stop();
+      bgmNodes?.lfo.stop();
+      bgmNodes = null;
+      bgmGain = null;
+      isBgmPlaying = false;
+    }, 700);
+  } catch {
+    bgmNodes = null;
+    bgmGain = null;
+    isBgmPlaying = false;
+  }
+}
+
+/**
+ * Public SFX & Ambient BGM Service
  */
 export const sfxEngine = {
   isMuted: () => isSfxMuted,
+  isBgmMuted: () => isBgmMuted,
 
   setMuted: (muted: boolean) => {
     isSfxMuted = muted;
@@ -211,6 +292,40 @@ export const sfxEngine = {
   toggleMute: () => {
     isSfxMuted = !isSfxMuted;
     return isSfxMuted;
+  },
+
+  toggleBgmMute: () => {
+    isBgmMuted = !isBgmMuted;
+    const ctx = getContext();
+    if (ctx) {
+      if (isBgmMuted) {
+        stopProceduralBgm(ctx);
+      } else if (masterGain) {
+        startProceduralBgm(ctx, masterGain, false);
+      }
+    }
+    return isBgmMuted;
+  },
+
+  startBgm: (voiceActive = false) => {
+    if (isBgmMuted) return;
+    const ctx = getContext();
+    if (ctx && masterGain) {
+      startProceduralBgm(ctx, masterGain, voiceActive);
+    }
+  },
+
+  stopBgm: () => {
+    const ctx = getContext();
+    if (ctx) {
+      stopProceduralBgm(ctx);
+    }
+  },
+
+  duckBgm: (isDucked: boolean) => {
+    if (!bgmGain || !audioCtx) return;
+    const target = isDucked ? 0.05 : 0.10; // 5% voiceover ducking vs 10% ambient
+    bgmGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.25);
   },
 
   play: (effect: SoundEffect, customVolume?: number) => {
@@ -234,7 +349,7 @@ export const sfxEngine = {
           break;
       }
     } catch {
-      // AudioContext state or permission error safe ignore
+      // AudioContext safe ignore
     }
   },
 };
