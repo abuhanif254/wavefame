@@ -1,9 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   CheckCircle2,
+  Cloud,
+  Cpu,
   Download,
+  ExternalLink,
   FileCode,
   Film,
   Loader2,
@@ -11,6 +15,7 @@ import {
   Sparkles,
   UserCheck,
   X,
+  Zap,
 } from "lucide-react";
 import { PREVIEW_LIMIT_SEC } from "@/lib/constants";
 import { downloadProjectManifest } from "@/lib/export";
@@ -22,6 +27,14 @@ import {
 } from "@/services/videoExporter";
 import { useAuthStore } from "@/lib/auth/authStore";
 import { useStudioStore } from "@/store/useStudioStore";
+
+interface CloudRenderState {
+  status: "idle" | "queued" | "rendering" | "completed" | "failed";
+  progress: number;
+  stage: string;
+  downloadUrl: string | null;
+  error: string | null;
+}
 
 export function ExportModal() {
   const isOpen = useStudioStore((s) => s.isExportModalOpen);
@@ -37,17 +50,111 @@ export function ExportModal() {
   const openAuthModal = useAuthStore((s) => s.openAuthModal);
   const consumeFreeTrial = useAuthStore((s) => s.consumeFreeTrial);
 
+  // Browser-side export state
   const [isExporting, setIsExporting] = useState(false);
   const [exportMode, setExportMode] = useState<"preview" | "trial" | "master">("preview");
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Cloud GPU Engine state
+  const [cloudRender, setCloudRender] = useState<CloudRenderState>({
+    status: "idle",
+    progress: 0,
+    stage: "",
+    downloadUrl: null,
+    error: null,
+  });
+  const [isEnqueuing, setIsEnqueuing] = useState(false);
+
+  // Poll Cloud Render Status when active
+  useEffect(() => {
+    if (!isOpen || (cloudRender.status !== "queued" && cloudRender.status !== "rendering")) {
+      return;
+    }
+
+    let isMounted = true;
+    const pollStatus = async () => {
+      try {
+        const res = await fetch(`/api/render/status?projectId=${project.id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (isMounted && data.success) {
+          const status = data.renderStatus || "idle";
+          setCloudRender((prev) => ({
+            ...prev,
+            status,
+            progress: data.renderProgress ?? prev.progress,
+            stage: data.renderStage || prev.stage,
+            downloadUrl: data.videoDownloadUrl || prev.downloadUrl,
+            error: data.renderError || null,
+          }));
+        }
+      } catch {
+        // Retry next poll
+      }
+    };
+
+    pollStatus();
+    const interval = setInterval(pollStatus, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [isOpen, cloudRender.status, project.id]);
+
   if (!isOpen) return null;
 
   const hasUsedTrial = user?.has_used_free_trial ?? false;
 
-  const handleStartExport = async (mode: "preview" | "trial" | "master") => {
+  // Cloud GPU Enqueue Handler
+  const handleEnqueueCloudGPU = async () => {
+    setIsEnqueuing(true);
+    setCloudRender({
+      status: "queued",
+      progress: 2,
+      stage: "Connecting to Cloud GPU render queue...",
+      downloadUrl: null,
+      error: null,
+    });
+
+    try {
+      const res = await fetch("/api/render/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id,
+          projectData: project,
+          captionStyle,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to enqueue project.");
+      }
+
+      setCloudRender((prev) => ({
+        ...prev,
+        status: "queued",
+        stage: "Enqueued. Waiting for GPU Worker to pick up...",
+      }));
+    } catch (err: unknown) {
+      setCloudRender({
+        status: "failed",
+        progress: 0,
+        stage: "Failed to queue job.",
+        downloadUrl: null,
+        error: (err as Error)?.message || "Failed to reach render queue.",
+      });
+    } finally {
+      setIsEnqueuing(false);
+    }
+  };
+
+  // Browser-Side MediaRecorder Export
+  const handleStartBrowserExport = async (mode: "preview" | "trial" | "master") => {
     setIsExporting(true);
     setExportMode(mode);
     setDownloadReady(false);
@@ -81,7 +188,6 @@ export function ExportModal() {
       downloadVideoBlob(blob, project.title, mode);
       setDownloadReady(true);
 
-      // Permanently consume one-time free trial upon successful export
       if (mode === "trial") {
         await consumeFreeTrial();
       }
@@ -94,7 +200,7 @@ export function ExportModal() {
     }
   };
 
-  const handleCancel = () => {
+  const handleCancelBrowserExport = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -113,7 +219,7 @@ export function ExportModal() {
         role="dialog"
         aria-modal="true"
         aria-label="Export Video"
-        className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl shadow-indigo-950/80 animate-modal-in"
+        className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl shadow-indigo-950/80 animate-modal-in max-h-[90vh] overflow-y-auto"
       >
         <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-indigo-500/15 to-transparent" />
 
@@ -133,10 +239,11 @@ export function ExportModal() {
           </div>
           <h2 className="text-lg font-semibold text-white">Export Video &amp; Project</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Render your animated 2-second cuts, AI panels, subtitles, and synchronized audio.
+            Render your animated 2-second cuts, 2x2 AI panels, subtitles, and master audio.
           </p>
         </header>
 
+        {/* 1. Browser Export Progress Screen */}
         {isExporting ? (
           <div className="relative mt-8 py-4 text-center">
             <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-indigo-500/15 ring-1 ring-indigo-400/30">
@@ -146,10 +253,10 @@ export function ExportModal() {
             {progress?.stage === "preloading" ? (
               <>
                 <h3 className="text-base font-semibold text-white">
-                  Step 1/2: Preloading High-Res Visual Assets ({progress.preloadCount || 0}/{progress.preloadTotal || 0})…
+                  Step 1/2: Preloading Visual Assets ({progress.preloadCount || 0}/{progress.preloadTotal || 0})…
                 </h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  Pre-fetching 2x2 AI grids &amp; motion graphics into memory to prevent blank frames.
+                  Pre-fetching 2x2 AI grids &amp; motion graphics into memory.
                 </p>
               </>
             ) : (
@@ -171,7 +278,7 @@ export function ExportModal() {
             </div>
 
             <button
-              onClick={handleCancel}
+              onClick={handleCancelBrowserExport}
               className="mt-6 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700"
             >
               Cancel rendering
@@ -182,10 +289,10 @@ export function ExportModal() {
             <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-emerald-500/20 text-emerald-400">
               <CheckCircle2 className="h-6 w-6" />
             </div>
-            <h3 className="text-base font-semibold text-white">Video exported successfully!</h3>
+            <h3 className="text-base font-semibold text-white">Browser Video Exported!</h3>
             <p className="mt-1 text-xs text-slate-300">
               {exportMode === "master"
-                ? "Full 1080p Master video (no watermark) downloaded."
+                ? "Full 1080p Master WebM video downloaded."
                 : exportMode === "trial"
                 ? "1-Minute Free Trial export completed and saved."
                 : "30-second preview clip downloaded."}
@@ -201,38 +308,149 @@ export function ExportModal() {
             </button>
           </div>
         ) : (
-          <div className="relative mt-6 space-y-3">
-            {/* Option 1: Full 1080p Master Video */}
-            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-slate-700">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-500/10 text-indigo-400">
-                    <Film className="h-4 w-4" />
+          <div className="relative mt-6 space-y-3.5">
+            {/* UNLOCKED USERS: DUAL PIPELINE OPTIONS */}
+            {isUnlocked ? (
+              <>
+                {/* Option 1A: Cloud GPU Engine (1080p .MP4 via Python + Colab Worker) */}
+                <div className="rounded-2xl border border-indigo-500/40 bg-gradient-to-b from-indigo-950/40 to-slate-950/80 p-4 shadow-lg shadow-indigo-950/40">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/40">
+                        <Cloud className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-white">
+                            Cloud GPU Engine (1080p .MP4)
+                          </span>
+                          <span className="rounded bg-gradient-to-r from-emerald-500 to-teal-500 px-2 py-0.5 text-[10px] font-black text-slate-950 uppercase tracking-wider">
+                            RECOMMENDED
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-300 leading-relaxed">
+                          NVIDIA GPU NVENC hardware acceleration · 1080p H.264 MP4 with 3-track mastered audio &amp; Cloudflare R2 upload.
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-white">Full 1080p Master Video</span>
-                      {isUnlocked && (
-                        <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400">
-                          UNLOCKED
+
+                  {/* Cloud Render Active Progress UI */}
+                  {cloudRender.status === "queued" || cloudRender.status === "rendering" ? (
+                    <div className="mt-4 rounded-xl border border-indigo-500/20 bg-slate-900/90 p-3.5 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold">
+                        <span className="flex items-center gap-2 text-indigo-300">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+                          {cloudRender.stage || "Processing render pipeline..."}
                         </span>
-                      )}
+                        <span className="font-mono text-white">{cloudRender.progress}%</span>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-300"
+                          style={{ width: `${Math.max(4, cloudRender.progress)}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                        <span>Status: <strong className="text-slate-200 capitalize">{cloudRender.status}</strong></span>
+                        <span className="text-indigo-400 font-mono">Auto-refreshes every 3s</span>
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-400">
-                      Entire {formatClock(project.audioDurationSec)} runtime · Zero Watermark · 1080p Master
+                  ) : cloudRender.status === "completed" && cloudRender.downloadUrl ? (
+                    <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                        <span>1080p MP4 Ready for Download!</span>
+                      </div>
+                      <a
+                        href={cloudRender.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-md hover:bg-emerald-400 transition"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        Download 1080p MP4
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
                     </div>
-                  </div>
+                  ) : cloudRender.status === "failed" ? (
+                    <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                        <span>Cloud render notice: {cloudRender.error || "Worker unavailable."}</span>
+                      </div>
+                      <button
+                        onClick={handleEnqueueCloudGPU}
+                        className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 transition"
+                      >
+                        Retry Cloud Render
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-3.5 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        Format: 1080p MP4 · NVENC H.264
+                      </span>
+                      <button
+                        onClick={handleEnqueueCloudGPU}
+                        disabled={isEnqueuing}
+                        className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-50"
+                      >
+                        {isEnqueuing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                        Enqueue 1080p MP4
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {isUnlocked ? (
-                  <button
-                    onClick={() => handleStartExport("master")}
-                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-500 transition"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Export 1080p
-                  </button>
-                ) : (
+                {/* Option 1B: Instant Browser MediaRecorder (.WebM Fallback) */}
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-slate-700">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-800 text-slate-300">
+                        <Cpu className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-white">Instant Browser Recorder (.WebM)</span>
+                          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
+                            LOCAL FALLBACK
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400">
+                          Renders on your device via HTML5 Canvas (useful if GPU worker is offline)
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleStartBrowserExport("master")}
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Export WebM
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* NON-UNLOCKED USERS: UNLOCK CTA */
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-slate-700">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-500/10 text-indigo-400">
+                      <Film className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">Full 1080p Master Video</span>
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Entire {formatClock(project.audioDurationSec)} runtime · Zero Watermark · 1080p MP4 + WebM
+                      </div>
+                    </div>
+                  </div>
+
                   <button
                     onClick={() => {
                       close();
@@ -243,9 +461,9 @@ export function ExportModal() {
                     <Lock className="h-3.5 w-3.5" />
                     Unlock (৳120)
                   </button>
-                )}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Option 2: One-Time 1-Minute Free Trial Export */}
             <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4 transition hover:border-indigo-500/50">
@@ -284,7 +502,7 @@ export function ExportModal() {
                   </span>
                 ) : (
                   <button
-                    onClick={() => handleStartExport("trial")}
+                    onClick={() => handleStartBrowserExport("trial")}
                     className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-indigo-500 transition"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -312,7 +530,7 @@ export function ExportModal() {
                 </div>
 
                 <button
-                  onClick={() => handleStartExport("preview")}
+                  onClick={() => handleStartBrowserExport("preview")}
                   className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition"
                 >
                   <Download className="h-3.5 w-3.5" />

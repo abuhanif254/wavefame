@@ -53,3 +53,13 @@ When connecting your GitHub repository to Cloudflare Workers Builds:
 - Client-side rendering pipeline: HTML5 2D Canvas + Web Audio stream + `MediaRecorder`.
 - Exports animated 2-second cuts, camera transforms, kinetic typography, subtitles, and audio into `.webm`.
 - Dual options: Free 30-second preview export or full unlocked 1080p render.
+
+## Phase 6 Architecture: Python GPU Video Render Engine & Cloud Queue (`engine/`)
+
+High-speed headless Python video rendering pipeline capable of running 24/7 on **Google Colab Pro (NVIDIA T4/L4/A100 GPU)**, Linux VPS, or local workstation:
+- **Queue Daemon (`engine/worker.py`)**: Continuously polls Supabase for unlocked projects with `render_status = 'queued'`, pushes live progress (0–100%) and stage updates back to Supabase, and uploads the finished video.
+- **Visual Composer (`engine/visuals.py`)**: Asynchronously downloads 2x2 AI grids, crops quadrants, renders procedural motion graphics (bar charts, radial dials, neural process flows), applies camera motions, and typesets bilingual typography (`Hind Siliguri` + `Plus Jakarta Sans`).
+- **3-Track Master Audio Mixer (`engine/audio_mixer.py`)**: Mixes user voiceover, auto-ducked ambient C-minor drone pad (4.5% vol), and procedural SFX (`whoosh`, `pop`, `cinematic_hit`, `typewriter`) into a 44.1kHz stereo master WAV.
+- **FFmpeg Hardware Acceleration (`engine/renderer.py`)**: Streams raw RGB24 frames directly into an FFmpeg pipe with NVIDIA GPU NVENC acceleration (`h264_nvenc`) and multi-core CPU fallback (`libx264 -preset veryfast`).
+- **Cloudflare R2 Storage (`engine/storage.py`)**: Uploads the finished 1080p `.mp4` to Cloudflare R2 / Supabase Storage and generates a 24-hour signed download URL.
+- **1-Click Colab Pro Worker (`engine/Waveframe_Colab_GPU_Worker.ipynb`)**: Notebook ready to upload to Google Colab Pro with automatic GPU verification, dependency installation, and 24/7 worker loop.

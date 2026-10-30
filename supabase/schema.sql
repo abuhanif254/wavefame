@@ -37,14 +37,44 @@ CREATE TABLE IF NOT EXISTS public.projects (
   status TEXT NOT NULL DEFAULT 'preview_ready' CHECK (status IN ('idle', 'analyzing', 'preview_ready', 'rendering_full', 'completed')),
   is_unlocked BOOLEAN NOT NULL DEFAULT false,
   scenes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  render_status TEXT NOT NULL DEFAULT 'idle' CHECK (render_status IN ('idle', 'queued', 'rendering', 'completed', 'failed')),
+  render_progress INTEGER NOT NULL DEFAULT 0 CHECK (render_progress >= 0 AND render_progress <= 100),
+  render_stage TEXT NOT NULL DEFAULT '',
+  audio_storage_url TEXT,
+  video_download_url TEXT,
+  render_error TEXT,
   expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '24 hours'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Indices for user queries and 24-hour expiry cleanups
+-- Idempotent Column Additions for Existing Projects Tables
+DO $$ 
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'render_status') THEN
+    ALTER TABLE public.projects ADD COLUMN render_status TEXT NOT NULL DEFAULT 'idle' CHECK (render_status IN ('idle', 'queued', 'rendering', 'completed', 'failed'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'render_progress') THEN
+    ALTER TABLE public.projects ADD COLUMN render_progress INTEGER NOT NULL DEFAULT 0 CHECK (render_progress >= 0 AND render_progress <= 100);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'render_stage') THEN
+    ALTER TABLE public.projects ADD COLUMN render_stage TEXT NOT NULL DEFAULT '';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'audio_storage_url') THEN
+    ALTER TABLE public.projects ADD COLUMN audio_storage_url TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'video_download_url') THEN
+    ALTER TABLE public.projects ADD COLUMN video_download_url TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'render_error') THEN
+    ALTER TABLE public.projects ADD COLUMN render_error TEXT;
+  END IF;
+END $$;
+
+-- Indices for user queries, 24-hour expiry cleanups, and the GPU render queue
 CREATE INDEX IF NOT EXISTS idx_projects_user_id ON public.projects(user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_expires_at ON public.projects(expires_at);
+CREATE INDEX IF NOT EXISTS idx_projects_render_queue ON public.projects(render_status, is_unlocked) WHERE render_status = 'queued';
 
 -- 4. PAYMENTS TABLE
 -- Records bKash and Nagad direct transactions (Single Video ৳120 / 5-Video Pack ৳499) and TrxIDs.
