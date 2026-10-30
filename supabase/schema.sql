@@ -351,6 +351,8 @@ VALUES (
     "creatorPackPriceBdt": 499
   }'::jsonb
 )
+ON CONFLICT (key) DO NOTHING;
+
 -- ==============================================================================
 -- 10. 24-HOUR AUTO-EXPIRY MAINTENANCE (POSTGRES / SUPABASE)
 -- Can be called via pg_cron or Supabase Edge Function cron daily:
