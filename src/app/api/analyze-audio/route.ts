@@ -6,8 +6,6 @@ import type {
   SoundEffect,
 } from "@/types/studio";
 
-export const runtime = "edge";
-
 interface AnalyzeRequest {
   fileName?: string;
   topic?: string;
