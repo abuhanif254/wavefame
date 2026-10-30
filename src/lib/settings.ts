@@ -5,6 +5,7 @@ export interface PlatformPaymentSettings {
   nagadType: "Personal" | "Merchant";
   singlePriceBdt: number;
   creatorPackPriceBdt: number;
+  helplineNumber: string;
 }
 
 export const DEFAULT_PAYMENT_SETTINGS: PlatformPaymentSettings = {
@@ -14,6 +15,7 @@ export const DEFAULT_PAYMENT_SETTINGS: PlatformPaymentSettings = {
   nagadType: (process.env.NAGAD_TYPE as "Personal" | "Merchant") || "Personal",
   singlePriceBdt: 120,
   creatorPackPriceBdt: 499,
+  helplineNumber: process.env.HELPLINE_NUMBER || "+8801700000000",
 };
 
 let cachedSettings: PlatformPaymentSettings = { ...DEFAULT_PAYMENT_SETTINGS };

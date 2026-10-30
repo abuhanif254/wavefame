@@ -9,6 +9,7 @@ import {
   Gift,
   Loader2,
   Lock,
+  MessageSquare,
   Phone,
   Sparkles,
   Ticket,
@@ -42,6 +43,7 @@ export function UnlockModal() {
   const deductCredit = useAuthStore((s) => s.deductCredit);
   const addCredits = useAuthStore((s) => s.addCredits);
   const openAuthModal = useAuthStore((s) => s.openAuthModal);
+  const refreshProfile = useAuthStore((s) => s.refreshProfile);
 
   const [activeTab, setActiveTab] = useState<Tab>("checkout");
   const [planId, setPlanId] = useState<PricingPlanId>("single");
@@ -63,11 +65,51 @@ export function UnlockModal() {
     nagadType: "Personal",
     singlePriceBdt: 120,
     creatorPackPriceBdt: 499,
+    helplineNumber: "+8801700000000",
   });
 
   const plan = getPlan(planId);
   const activeNumber = provider === "bkash" ? paymentSettings.bkashNumber : paymentSettings.nagadNumber;
   const activeType = provider === "bkash" ? paymentSettings.bkashType : paymentSettings.nagadType;
+
+  // Poll payment approval status every 5 seconds while in pending_submitted stage
+  useEffect(() => {
+    if (step !== "pending_submitted" || !isOpen) return;
+
+    let isMounted = true;
+    const pollPaymentStatus = async () => {
+      try {
+        const queryParams = new URLSearchParams();
+        if (trxId.trim()) queryParams.set("trxId", trxId.trim());
+        if (project.id) queryParams.set("projectId", project.id);
+
+        const res = await fetch(`/api/payments/status?${queryParams.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.isUnlocked || data.status === "approved") {
+            if (!project.isUnlocked) {
+              toggleUnlocked();
+            }
+            if (refreshProfile) {
+              await refreshProfile();
+            }
+            if (isMounted) {
+              setStep("success");
+            }
+          }
+        }
+      } catch {
+        // Silently retry next poll tick
+      }
+    };
+
+    pollPaymentStatus();
+    const interval = setInterval(pollPaymentStatus, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [step, isOpen, trxId, project.id, project.isUnlocked, toggleUnlocked, refreshProfile]);
 
   useEffect(() => {
     if (isOpen) {
@@ -500,17 +542,38 @@ export function UnlockModal() {
                   </p>
                 </div>
 
+                <div className="flex items-center justify-center gap-2 text-[11px] font-medium text-amber-300 bg-amber-500/10 py-1.5 px-3 rounded-full w-fit mx-auto border border-amber-500/20">
+                  <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
+                  Live polling approval status every 5s… Auto-unlocks when confirmed!
+                </div>
+
                 <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400 max-w-sm mx-auto">
                   <span>Reference ID: </span>
                   <code className="text-white">WF-{project.id.slice(0, 6)}</code>
                 </div>
 
-                <button
-                  onClick={close}
-                  className="rounded-xl bg-slate-800 px-5 py-2 text-xs font-semibold text-white hover:bg-slate-700 transition"
-                >
-                  Close
-                </button>
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                  {paymentSettings.helplineNumber && (
+                    <a
+                      href={`https://wa.me/${paymentSettings.helplineNumber.replace(/[^\d]/g, "")}?text=${encodeURIComponent(
+                        `Hi Waveframe Support, I submitted ${provider.toUpperCase()} TrxID: ${trxId.trim()} for Project ${project.title || project.id}. Please expedite my 1080p master unlock!`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-500 transition active:scale-[0.99]"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      WhatsApp Helpline (Expedite)
+                    </a>
+                  )}
+
+                  <button
+                    onClick={close}
+                    className="rounded-xl bg-slate-800 px-5 py-2 text-xs font-semibold text-white hover:bg-slate-700 transition"
+                  >
+                    Close &amp; Keep Working
+                  </button>
+                </div>
               </div>
             )}
 

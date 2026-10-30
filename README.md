@@ -5,9 +5,19 @@ Next.js 15 (App Router) · Cloudflare Pages & Edge Ready · Web Audio Synthesize
 ```bash
 npm install
 npm run dev     # http://localhost:3000 (landing) · /studio (editor)
-npm run build   # Cloudflare Edge compatible build
+npm run build   # OpenNext Cloudflare Edge build
+npm run deploy-cf # Direct deployment via @opennextjs/cloudflare
 npm run lint    # tsc --noEmit
 ```
+
+## Cloudflare Workers / Pages Deployment Configuration
+When connecting your GitHub repository to Cloudflare Workers Builds:
+- **Build command:** `npm run build` (or `npx @opennextjs/cloudflare build`)
+- **Deploy command:** `npx @opennextjs/cloudflare deploy` (or `npm run deploy-cf`)
+- **Root directory:** `/`
+
+> [!IMPORTANT]
+> Ensure the **Deploy command** in the Cloudflare Dashboard is set to `npx @opennextjs/cloudflare deploy`. Using the default `npx wrangler deploy` without the OpenNext wrapper will time out because OpenNext requires skew-protection and asset mapping.
 
 ## Phase 2 Architecture & Features
 

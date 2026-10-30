@@ -29,6 +29,9 @@ export function ExportModal() {
   const project = useStudioStore((s) => s.project);
   const isUnlocked = useStudioStore((s) => s.project.isUnlocked);
   const openUnlockModal = useStudioStore((s) => s.openUnlockModal);
+  const captionStyle = useStudioStore((s) => s.captionStyle);
+  const isBgmMuted = useStudioStore((s) => s.isBgmMuted);
+  const isSfxMuted = useStudioStore((s) => s.isSfxMuted);
 
   const user = useAuthStore((s) => s.user);
   const openAuthModal = useAuthStore((s) => s.openAuthModal);
@@ -68,6 +71,9 @@ export function ExportModal() {
         project,
         isPreviewOnly: mode === "preview",
         isTrial: mode === "trial",
+        captionStyle,
+        isBgmMuted,
+        isSfxMuted,
         onProgress: (p) => setProgress(p),
         signal: controller.signal,
       });

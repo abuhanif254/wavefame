@@ -86,6 +86,7 @@ export default function AdminDashboardPage() {
     nagadType: "Personal",
     singlePriceBdt: 120,
     creatorPackPriceBdt: 499,
+    helplineNumber: "+8801700000000",
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<{ text: string; error?: boolean } | null>(null);
@@ -719,9 +720,9 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              {/* Pricing in BDT */}
+              {/* Pricing in BDT & Founder Support */}
               <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-3">
-                <div className="font-semibold text-xs text-slate-200">Video Plan Pricing (BDT)</div>
+                <div className="font-semibold text-xs text-slate-200">Video Plan Pricing &amp; WhatsApp Helpline</div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-[11px] font-medium text-slate-400">
@@ -753,6 +754,25 @@ export default function AdminDashboardPage() {
                       }
                       className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                     />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-medium text-slate-400">
+                      Founder WhatsApp Helpline Number (E.164 with country code)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={settingsForm.helplineNumber || ""}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, helplineNumber: e.target.value })
+                      }
+                      placeholder="+8801700000000"
+                      className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-mono text-white outline-none focus:border-indigo-500"
+                    />
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      Shown on the pending payment screen so customers can tap to expedite manual verification.
+                    </p>
                   </div>
                 </div>
               </div>

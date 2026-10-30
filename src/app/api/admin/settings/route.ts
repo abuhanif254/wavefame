@@ -54,6 +54,7 @@ export async function POST(req: Request) {
       nagadType: body.nagadType === "Merchant" ? "Merchant" : "Personal",
       singlePriceBdt: Number(body.singlePriceBdt) || 120,
       creatorPackPriceBdt: Number(body.creatorPackPriceBdt) || 499,
+      helplineNumber: body.helplineNumber?.trim() || DEFAULT_PAYMENT_SETTINGS.helplineNumber,
     };
 
     setCachedSettings(updatedSettings);

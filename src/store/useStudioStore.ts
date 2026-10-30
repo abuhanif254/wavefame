@@ -16,6 +16,7 @@ import { findSceneIndexAtTime } from "@/lib/timeline";
 import { clamp } from "@/lib/utils";
 import type { CaptionStyle } from "@/lib/typography";
 import { sfxEngine } from "@/services/sfxEngine";
+import { processChunkedAudioAnalysis } from "@/services/audioProcessor";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -371,39 +372,25 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
       selectedSceneId: null,
       currentTime: 0,
       isPlaying: false,
-      analysisProgress: 15,
-      analysisStage: "Analyzing audio waveforms & transcribing…",
+      analysisProgress: 5,
+      analysisStage: "Initializing audio stream & waveform buffers…",
       renderProgress: 0,
     });
 
-    // Start progress ticker while API executes
-    const interval = setInterval(() => {
-      const cur = get().analysisProgress;
-      if (cur < 85) {
-        set({ analysisProgress: cur + 4, analysisStage: stageFor(cur + 4) });
-      }
-    }, 200);
-
     try {
       const apiKey = get().geminiApiKey;
-      const res = await fetch("/api/analyze-audio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: file.name,
-          durationSec: cleanDuration,
-          apiKey: apiKey || undefined,
-        }),
+      const scenes = await processChunkedAudioAnalysis({
+        file,
+        durationSec: cleanDuration,
+        apiKey: apiKey || undefined,
+        chunkDurationSec: 60, // 60s windows guarantee edge safety & rapid feedback
+        onProgress: (p) => {
+          set({
+            analysisProgress: p.percent,
+            analysisStage: p.stage,
+          });
+        },
       });
-
-      clearInterval(interval);
-
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
-      }
-
-      const data = await res.json();
-      const scenes: SceneNode[] = data.scenes || generateMockScenes(cleanDuration);
 
       set((s) => ({
         analysisProgress: 100,
@@ -412,14 +399,13 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
         currentTime: 0,
         project: {
           ...s.project,
-          title: data.title || title,
+          title,
           audioDurationSec: cleanDuration,
           scenes,
           status: "preview_ready",
         },
       }));
     } catch {
-      clearInterval(interval);
       // Fallback generator seamlessly kicks in
       const scenes = generateMockScenes(cleanDuration);
       set((s) => ({

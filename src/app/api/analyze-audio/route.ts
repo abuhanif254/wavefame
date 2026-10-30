@@ -11,6 +11,10 @@ interface AnalyzeRequest {
   topic?: string;
   durationSec?: number;
   apiKey?: string;
+  startTimeOffset?: number;
+  startIndex?: number;
+  chunkIndex?: number;
+  totalChunks?: number;
 }
 
 const FALLBACK_TOPIC_KEYWORDS: Record<string, { title: string; keywords: string[] }> = {
@@ -96,34 +100,40 @@ function attachAiGridSlicing(scenes: SceneNode[]): SceneNode[] {
 /**
  * Intelligent tailored fallback storyboard generator
  */
-function generateFallbackStoryboard(fileName: string, durationSec: number): { title: string; scenes: SceneNode[] } {
+function generateFallbackStoryboard(
+  fileName: string,
+  durationSec: number,
+  startTimeOffset = 0,
+  startIndex = 0
+): { title: string; scenes: SceneNode[] } {
   const { title, keywords } = inferTopicFromFileName(fileName);
   const totalScenes = Math.max(1, Math.ceil(durationSec / 2));
   const scenes: SceneNode[] = [];
 
   for (let i = 0; i < totalScenes; i++) {
-    const startTime = i * 2;
-    const endTime = Math.min(startTime + 2, durationSec);
-    const kw = keywords[i % keywords.length];
-    const visualType = SCENE_TYPES[i % SCENE_TYPES.length];
-    const cameraEffect = CAMERAS[(i * 3) % CAMERAS.length];
-    const sfx = i === 0 ? "cinematic_hit" : SFXS[(i * 2 + 1) % SFXS.length];
+    const globalIdx = startIndex + i;
+    const startTime = startTimeOffset + i * 2;
+    const endTime = startTimeOffset + Math.min(i * 2 + 2, durationSec);
+    const kw = keywords[globalIdx % keywords.length];
+    const visualType = SCENE_TYPES[globalIdx % SCENE_TYPES.length];
+    const cameraEffect = CAMERAS[(globalIdx * 3) % CAMERAS.length];
+    const sfx = globalIdx === 0 ? "cinematic_hit" : SFXS[(globalIdx * 2 + 1) % SFXS.length];
 
     const transcript =
-      i === 0
+      globalIdx === 0
         ? `Let's break down the truth about ${title}.`
         : `Understanding ${kw}: this fundamentally shifts how the entire system reacts.`;
 
     const onScreenText =
-      i === 0
+      globalIdx === 0
         ? title.toUpperCase()
         : `${kw.toUpperCase()}`;
 
     const prompt = `Cinematic explainer illustration of ${kw} in ${title}, glowing holographic visuals, dark studio background, high contrast, 8k resolution`;
 
     scenes.push({
-      id: `scene-${i.toString().padStart(4, "0")}`,
-      index: i,
+      id: `scene-${globalIdx.toString().padStart(4, "0")}`,
+      index: globalIdx,
       startTime,
       endTime,
       transcriptSegment: transcript,
@@ -132,7 +142,7 @@ function generateFallbackStoryboard(fileName: string, durationSec: number): { ti
       imagePrompt: prompt,
       cameraEffect,
       sfx,
-      previewUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1280&height=720&nologo=true&seed=${i * 31 + 7}`,
+      previewUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1280&height=720&nologo=true&seed=${globalIdx * 31 + 7}`,
     });
   }
 
@@ -159,26 +169,30 @@ export async function POST(req: Request) {
     }
 
     const fileName = body.fileName || "audio_project.mp3";
-    const durationSec = Math.max(4, Math.min(body.durationSec || 60, 3600));
+    const durationSec = Math.max(2, Math.min(body.durationSec || 60, 3600));
+    const startTimeOffset = Math.max(0, body.startTimeOffset || 0);
+    const startIndex = Math.max(0, body.startIndex || 0);
     const headerKey = req.headers.get("x-gemini-api-key");
     const apiKey = body.apiKey || headerKey || process.env.GEMINI_API_KEY;
 
     // If no API key provided, immediately return intelligent tailored fallback
     if (!apiKey) {
-      const result = generateFallbackStoryboard(fileName, durationSec);
+      const result = generateFallbackStoryboard(fileName, durationSec, startTimeOffset, startIndex);
       return NextResponse.json({
         success: true,
         source: "intelligent_fallback",
         title: result.title,
         audioDurationSec: durationSec,
+        startTimeOffset,
         scenes: result.scenes,
       });
     }
 
     // Call real Google Gemini REST API (gemini-2.5-flash)
     // We request up to 30 scenes per Gemini turn to ensure fast response & fit token limits
-    const targetSceneCount = Math.min(Math.ceil(durationSec / 2), 24);
-    const systemPrompt = `You are a Principal Explainer Video Director. Break down an audio titled "${fileName}" (${durationSec} seconds long) into exactly ${targetSceneCount} rapid 2-second visual scenes for high retention.
+    const targetSceneCount = Math.min(Math.ceil(durationSec / 2), 30);
+    const timeWindowDesc = startTimeOffset > 0 ? ` (from ${startTimeOffset}s to ${startTimeOffset + durationSec}s)` : "";
+    const systemPrompt = `You are a Principal Explainer Video Director. Break down an audio titled "${fileName}"${timeWindowDesc} (${durationSec} seconds long) into exactly ${targetSceneCount} rapid 2-second visual scenes for high retention.
 Return a STRICT JSON array of objects with the following schema:
 [
   {
@@ -208,13 +222,14 @@ No markdown surrounding, no explanation, only valid JSON.`;
 
     if (!res.ok) {
       // If Gemini fails (rate limit, invalid key), seamlessly fall back
-      const fallback = generateFallbackStoryboard(fileName, durationSec);
+      const fallback = generateFallbackStoryboard(fileName, durationSec, startTimeOffset, startIndex);
       return NextResponse.json({
         success: true,
         source: "fallback_after_gemini_error",
         error: `Gemini API returned ${res.status}`,
         title: fallback.title,
         audioDurationSec: durationSec,
+        startTimeOffset,
         scenes: fallback.scenes,
       });
     }
@@ -232,31 +247,37 @@ No markdown surrounding, no explanation, only valid JSON.`;
     }
 
     const builtScenes: SceneNode[] = parsedScenes.map((item, idx) => {
-      const startTime = idx * 2;
-      const endTime = Math.min(startTime + 2, durationSec);
+      const globalIdx = startIndex + idx;
+      const startTime = startTimeOffset + idx * 2;
+      const endTime = startTimeOffset + Math.min(idx * 2 + 2, durationSec);
       const visualType: SceneType = SCENE_TYPES.includes(item.visualType)
         ? item.visualType
-        : SCENE_TYPES[idx % SCENE_TYPES.length];
+        : SCENE_TYPES[globalIdx % SCENE_TYPES.length];
 
       return {
-        id: `scene-${idx.toString().padStart(4, "0")}`,
-        index: idx,
+        id: `scene-${globalIdx.toString().padStart(4, "0")}`,
+        index: globalIdx,
         startTime,
         endTime,
-        transcriptSegment: item.transcriptSegment || `Scene ${idx + 1} analysis segment`,
-        onScreenText: item.onScreenText || `KEY POINT ${idx + 1}`,
+        transcriptSegment: item.transcriptSegment || `Scene ${globalIdx + 1} analysis segment`,
+        onScreenText: item.onScreenText || `KEY POINT ${globalIdx + 1}`,
         visualType,
         imagePrompt: item.imagePrompt || `Cinematic render for ${fileName}`,
         cameraEffect: CAMERAS.includes(item.cameraEffect) ? item.cameraEffect : "zoom_in_slow",
         sfx: SFXS.includes(item.sfx) ? item.sfx : "whoosh",
-        previewUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(item.imagePrompt || fileName)}?width=1280&height=720&nologo=true&seed=${idx * 43 + 1}`,
+        previewUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(item.imagePrompt || fileName)}?width=1280&height=720&nologo=true&seed=${globalIdx * 43 + 1}`,
       };
     });
 
     // If audio is longer than generated scenes, extend to cover the full duration
     if (builtScenes.length * 2 < durationSec) {
       const extraNeeded = Math.ceil(durationSec / 2) - builtScenes.length;
-      const fallbackExtra = generateFallbackStoryboard(fileName, durationSec).scenes.slice(builtScenes.length);
+      const fallbackExtra = generateFallbackStoryboard(
+        fileName,
+        durationSec,
+        startTimeOffset,
+        startIndex
+      ).scenes.slice(builtScenes.length);
       builtScenes.push(...fallbackExtra);
     }
 
@@ -267,11 +288,12 @@ No markdown surrounding, no explanation, only valid JSON.`;
       source: "gemini-2.5-flash",
       title: inferTopicFromFileName(fileName).title,
       audioDurationSec: durationSec,
+      startTimeOffset,
       scenes: enriched,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Internal error";
-    const fallback = generateFallbackStoryboard("Uploaded Audio", 60);
+    const fallback = generateFallbackStoryboard("Uploaded Audio", 60, 0, 0);
     return NextResponse.json({
       success: true,
       source: "fallback_exception",
