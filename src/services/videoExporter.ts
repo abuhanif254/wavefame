@@ -19,6 +19,8 @@ export interface VideoExportOptions {
   project: ProjectState;
   /** If true, clamp export to PREVIEW_LIMIT_SEC (30s) */
   isPreviewOnly?: boolean;
+  /** If true, 1-minute free trial export (60s) */
+  isTrial?: boolean;
   onProgress?: (p: ExportProgress) => void;
   signal?: AbortSignal;
 }
@@ -53,6 +55,7 @@ function drawSceneFrame(
   scene: SceneNode,
   sceneElapsed: number,
   sceneDuration: number,
+  isWatermarked: boolean = false,
 ) {
   const progress = Math.min(1, Math.max(0, sceneElapsed / sceneDuration));
 
@@ -224,12 +227,38 @@ function drawSceneFrame(
     ctx.restore();
   }
 
-  // 3. Top watermark / time code
-  ctx.save();
-  ctx.font = `600 ${Math.round(width * 0.015)}px monospace`;
-  ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
-  ctx.fillText("WAVEFRAME HD", width * 0.04, height * 0.07);
-  ctx.restore();
+  // 3. Watermark enforcement
+  if (isWatermarked) {
+    ctx.save();
+    // Center diagonal watermark
+    ctx.translate(cx, cy);
+    ctx.rotate(-0.18);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.font = `900 ${Math.round(width * 0.038)}px sans-serif`;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
+    ctx.fillText("WAVEFRAME STUDIO — PREVIEW", 0, -height * 0.03);
+
+    ctx.font = `600 ${Math.round(width * 0.015)}px sans-serif`;
+    ctx.fillStyle = "rgba(251, 191, 36, 0.28)"; // amber subtle
+    ctx.fillText("UNLOCK 1080p MASTER TO REMOVE WATERMARK", 0, height * 0.03);
+    ctx.restore();
+
+    // Top preview watermark tag
+    ctx.save();
+    ctx.font = `700 ${Math.round(width * 0.014)}px monospace`;
+    ctx.fillStyle = "rgba(251, 191, 36, 0.75)";
+    ctx.fillText("🔒 PREVIEW WATERMARK", width * 0.04, height * 0.07);
+    ctx.restore();
+  } else {
+    // Unlocked 1080p Master Tag
+    ctx.save();
+    ctx.font = `700 ${Math.round(width * 0.013)}px monospace`;
+    ctx.fillStyle = "rgba(52, 211, 153, 0.8)";
+    ctx.fillText("● 1080p MASTER UNLOCKED", width * 0.04, height * 0.07);
+    ctx.restore();
+  }
 
   ctx.restore();
 }
@@ -240,12 +269,25 @@ function drawSceneFrame(
 export async function exportStudioVideo({
   project,
   isPreviewOnly = false,
+  isTrial = false,
   onProgress,
   signal,
 }: VideoExportOptions): Promise<Blob> {
-  const durationSec = isPreviewOnly
-    ? Math.min(PREVIEW_LIMIT_SEC, project.audioDurationSec)
-    : project.audioDurationSec;
+  // Determine duration and watermark status
+  let durationSec = project.audioDurationSec;
+  let isWatermarked = !project.isUnlocked;
+
+  if (isTrial) {
+    durationSec = Math.min(60, project.audioDurationSec);
+    isWatermarked = true; // Trial export includes watermark
+  } else if (isPreviewOnly || !project.isUnlocked) {
+    durationSec = Math.min(PREVIEW_LIMIT_SEC, project.audioDurationSec);
+    isWatermarked = true;
+  } else {
+    // Unlocked project: full duration up to 20 minutes, zero watermark
+    durationSec = project.audioDurationSec;
+    isWatermarked = false;
+  }
 
   const scenes = project.scenes.filter((s) => s.startTime < durationSec);
   if (scenes.length === 0) {
@@ -347,7 +389,7 @@ export async function exportStudioVideo({
     const sceneElapsed = currentSec - scene.startTime;
     const sceneDuration = scene.endTime - scene.startTime || 2;
 
-    drawSceneFrame(ctx, width, height, scene, sceneElapsed, sceneDuration);
+    drawSceneFrame(ctx, width, height, scene, sceneElapsed, sceneDuration, isWatermarked);
 
     const percent = Math.round((frame / totalFrames) * 98);
     onProgress?.({
@@ -386,10 +428,19 @@ export async function exportStudioVideo({
 /**
  * Triggers instant browser download of the generated video blob
  */
-export function downloadVideoBlob(blob: Blob, projectTitle: string, isPreviewOnly: boolean) {
+export function downloadVideoBlob(
+  blob: Blob,
+  projectTitle: string,
+  mode: "preview" | "trial" | "master" = "preview"
+) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const suffix = isPreviewOnly ? "_30s_preview.webm" : "_full_1080p.webm";
+  const suffixMap = {
+    preview: "_30s_preview.webm",
+    trial: "_60s_free_trial.webm",
+    master: "_full_1080p_master.webm",
+  };
+  const suffix = suffixMap[mode] || "_video.webm";
   a.href = url;
   a.download = `${slugify(projectTitle)}${suffix}`;
   document.body.appendChild(a);

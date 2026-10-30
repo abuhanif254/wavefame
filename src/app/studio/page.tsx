@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ScrollText, SlidersHorizontal, Clapperboard } from "lucide-react";
+import { AuthModal } from "@/components/auth/AuthModal";
 import { AnalysisOverlay } from "@/components/studio/AnalysisOverlay";
 import { ApiSettingsModal } from "@/components/studio/ApiSettingsModal";
 import { ExportModal } from "@/components/studio/ExportModal";
@@ -15,6 +16,8 @@ import { UnlockModal } from "@/components/studio/UnlockModal";
 import { usePlaybackClock } from "@/hooks/usePlaybackClock";
 import { useStudioHotkeys } from "@/hooks/useStudioHotkeys";
 import { cn } from "@/lib/utils";
+import { debouncedSaveProject } from "@/services/cloudSync";
+import { useAuthStore } from "@/lib/auth/authStore";
 import { useStudioStore } from "@/store/useStudioStore";
 
 type Pane = "script" | "preview" | "inspector";
@@ -30,7 +33,23 @@ export default function StudioPage() {
   useStudioHotkeys();
 
   const isAnalyzing = useStudioStore((s) => s.project.status === "analyzing");
+  const project = useStudioStore((s) => s.project);
   const [pane, setPane] = useState<Pane>("preview");
+
+  const user = useAuthStore((s) => s.user);
+  const initAuth = useAuthStore((s) => s.initAuth);
+
+  // Initialize auth state on mount
+  useEffect(() => {
+    initAuth();
+  }, [initAuth]);
+
+  // Debounced auto-save project whenever scenes, title, or status changes
+  useEffect(() => {
+    if (project && project.scenes.length > 0) {
+      debouncedSaveProject(project, user?.id);
+    }
+  }, [project, user?.id]);
 
   // On < lg screens only one pane is visible at a time; at lg+ all three show side by side.
   const paneClass = (id: Pane) => cn("min-h-0 min-w-0", pane === id ? "block" : "hidden", "lg:block");
@@ -80,6 +99,7 @@ export default function StudioPage() {
       <UnlockModal />
       <ApiSettingsModal />
       <ExportModal />
+      <AuthModal />
     </div>
   );
 }

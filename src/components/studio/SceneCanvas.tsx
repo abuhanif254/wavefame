@@ -4,6 +4,7 @@ import { useState, type CSSProperties } from "react";
 import type { SceneNode } from "@/types/studio";
 import { SCENE_DURATION_SEC } from "@/lib/constants";
 import { gradient, hash, sceneGradient, sceneHues } from "@/lib/visuals";
+import { useStudioStore } from "@/store/useStudioStore";
 
 const QUADRANT_POSITIONS: Record<0 | 1 | 2 | 3, { pos: string; label: string }> = {
   0: { pos: "0% 0%", label: "Quadrant 1 · Top-Left" },
@@ -262,6 +263,7 @@ interface SceneCanvasProps {
  * 16:9 Canvas with real-time camera movements, kinetic typography, and subtitles.
  */
 export function SceneCanvas({ scene, isPlaying }: SceneCanvasProps) {
+  const isUnlocked = useStudioStore((s) => s.project.isUnlocked);
   const duration = Math.max(0.5, scene.endTime - scene.startTime) || SCENE_DURATION_SEC;
   const cameraStyle: CSSProperties = {
     animationDuration: `${duration}s`,
@@ -311,6 +313,33 @@ export function SceneCanvas({ scene, isPlaying }: SceneCanvasProps) {
           {scene.transcriptSegment}
         </span>
       </div>
+
+      {/* Semi-transparent Watermark overlay on locked preview */}
+      {!isUnlocked && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center select-none">
+          <div className="-rotate-12 transform rounded-2xl border-2 border-dashed border-white/30 bg-slate-950/50 px-6 py-3 text-center shadow-2xl backdrop-blur-[2px]">
+            <div className="font-mono text-[2.6cqw] font-black tracking-widest text-white/75 uppercase drop-shadow">
+              Waveframe Studio — Preview
+            </div>
+            <div className="text-[1.1cqw] font-mono tracking-wider text-amber-300/80">
+              🔒 30s PREVIEW WATERMARK · UNLOCK FOR 1080p MASTER
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Top status indicator: Unlocked 1080p Master vs Watermarked Preview */}
+      {isUnlocked ? (
+        <div className="pointer-events-none absolute left-[3%] top-[4%] flex items-center gap-1.5 rounded-md border border-emerald-400/40 bg-slate-950/80 px-2 py-1 font-mono text-[1cqw] text-emerald-300 backdrop-blur-md">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          1080p MASTER · UNLOCKED
+        </div>
+      ) : (
+        <div className="pointer-events-none absolute left-[3%] top-[4%] flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-slate-950/80 px-2 py-1 font-mono text-[1cqw] text-amber-300 backdrop-blur-md">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          PREVIEW WATERMARKED
+        </div>
+      )}
     </div>
   );
 }

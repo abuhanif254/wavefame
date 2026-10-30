@@ -1,17 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import {
+  Cloud,
   Download,
   FlaskConical,
   KeyRound,
   Loader2,
   Lock,
+  ShieldCheck,
+  Sparkles,
+  User,
 } from "lucide-react";
 import { Logo } from "@/components/shared/Logo";
 import { ExpiryCountdown } from "@/components/studio/ExpiryCountdown";
 import { UploadAudioButton } from "@/components/studio/UploadAudioButton";
 import { STATUS_META } from "@/lib/studio-meta";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/lib/auth/authStore";
 import { useStudioStore } from "@/store/useStudioStore";
 
 export function TopBar() {
@@ -25,12 +31,15 @@ export function TopBar() {
   const openApiSettings = useStudioStore((s) => s.openApiSettings);
   const geminiApiKey = useStudioStore((s) => s.geminiApiKey);
 
+  const user = useAuthStore((s) => s.user);
+  const openAuthModal = useAuthStore((s) => s.openAuthModal);
+
   const statusMeta = STATUS_META[status];
   const isRendering = status === "rendering_full";
   const isBusy = status === "analyzing" || status === "idle";
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-800 bg-slate-950/90 px-3 backdrop-blur md:px-4">
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-800 bg-slate-950/90 px-3 backdrop-blur md:gap-3 md:px-4">
       <Logo className="shrink-0" href="/" />
       <div className="hidden h-5 w-px bg-slate-800 sm:block" />
 
@@ -52,6 +61,40 @@ export function TopBar() {
       <div className="hidden lg:block">
         <ExpiryCountdown />
       </div>
+
+      {/* Admin Quick Link (for Founder) */}
+      {user?.is_admin && (
+        <Link
+          href="/admin"
+          className="hidden sm:flex items-center gap-1 rounded-lg border border-violet-500/30 bg-violet-500/10 px-2 py-1.5 text-xs font-semibold text-violet-300 hover:bg-violet-500/20 transition"
+          title="Founder's Admin & Revenue Center"
+        >
+          <ShieldCheck className="h-3.5 w-3.5 text-violet-400" />
+          <span className="hidden md:inline">Admin</span>
+        </Link>
+      )}
+
+      {/* User Credits & Auth Profile Button */}
+      {user ? (
+        <button
+          onClick={openAuthModal}
+          className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-300 hover:border-slate-600 transition"
+          title={`Logged in as ${user.email}`}
+        >
+          <span className="flex items-center gap-1 font-mono font-bold text-indigo-300">
+            <Sparkles className="h-3 w-3 text-indigo-400" />
+            {user.credits} <span className="hidden sm:inline font-sans text-slate-400 font-normal">Credits</span>
+          </span>
+        </button>
+      ) : (
+        <button
+          onClick={openAuthModal}
+          className="flex items-center gap-1 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/20 transition"
+        >
+          <User className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Sign In / Trial</span>
+        </button>
+      )}
 
       {/* Gemini AI Settings button */}
       <button

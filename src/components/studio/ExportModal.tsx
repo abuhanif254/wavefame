@@ -9,6 +9,7 @@ import {
   Loader2,
   Lock,
   Sparkles,
+  UserCheck,
   X,
 } from "lucide-react";
 import { PREVIEW_LIMIT_SEC } from "@/lib/constants";
@@ -19,6 +20,7 @@ import {
   exportStudioVideo,
   type ExportProgress,
 } from "@/services/videoExporter";
+import { useAuthStore } from "@/lib/auth/authStore";
 import { useStudioStore } from "@/store/useStudioStore";
 
 export function ExportModal() {
@@ -28,20 +30,33 @@ export function ExportModal() {
   const isUnlocked = useStudioStore((s) => s.project.isUnlocked);
   const openUnlockModal = useStudioStore((s) => s.openUnlockModal);
 
+  const user = useAuthStore((s) => s.user);
+  const openAuthModal = useAuthStore((s) => s.openAuthModal);
+  const consumeFreeTrial = useAuthStore((s) => s.consumeFreeTrial);
+
   const [isExporting, setIsExporting] = useState(false);
+  const [exportMode, setExportMode] = useState<"preview" | "trial" | "master">("preview");
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   if (!isOpen) return null;
 
-  const handleStartExport = async (isPreviewOnly: boolean) => {
+  const hasUsedTrial = user?.has_used_free_trial ?? false;
+
+  const handleStartExport = async (mode: "preview" | "trial" | "master") => {
     setIsExporting(true);
+    setExportMode(mode);
     setDownloadReady(false);
+
+    let totalDuration = project.audioDurationSec;
+    if (mode === "preview") totalDuration = Math.min(PREVIEW_LIMIT_SEC, project.audioDurationSec);
+    if (mode === "trial") totalDuration = Math.min(60, project.audioDurationSec);
+
     setProgress({
       percent: 0,
       currentSec: 0,
-      totalSec: isPreviewOnly ? Math.min(PREVIEW_LIMIT_SEC, project.audioDurationSec) : project.audioDurationSec,
+      totalSec: totalDuration,
       stage: "rendering",
     });
 
@@ -51,13 +66,19 @@ export function ExportModal() {
     try {
       const blob = await exportStudioVideo({
         project,
-        isPreviewOnly,
+        isPreviewOnly: mode === "preview",
+        isTrial: mode === "trial",
         onProgress: (p) => setProgress(p),
         signal: controller.signal,
       });
 
-      downloadVideoBlob(blob, project.title, isPreviewOnly);
+      downloadVideoBlob(blob, project.title, mode);
       setDownloadReady(true);
+
+      // Permanently consume one-time free trial upon successful export
+      if (mode === "trial") {
+        await consumeFreeTrial();
+      }
     } catch (err: unknown) {
       if ((err as Error)?.message !== "Export cancelled by user.") {
         setProgress((prev) => (prev ? { ...prev, stage: "error", error: "Export encountered an issue." } : null));
@@ -106,7 +127,7 @@ export function ExportModal() {
           </div>
           <h2 className="text-lg font-semibold text-white">Export Video &amp; Project</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Render your animated 2-second scenes, AI panels, and synchronized audio into high-resolution WebM.
+            Render your animated 2-second cuts, AI panels, subtitles, and synchronized audio.
           </p>
         </header>
 
@@ -119,7 +140,7 @@ export function ExportModal() {
               Rendering frames… {progress?.percent || 0}%
             </h3>
             <p className="mt-1 text-xs text-slate-400">
-              Rendering scene cuts at 30 FPS · {formatClock(progress?.currentSec || 0)} / {formatClock(progress?.totalSec || 0)}
+              {exportMode === "master" ? "1080p Master (No Watermark)" : "Watermarked Preview"} · {formatClock(progress?.currentSec || 0)} / {formatClock(progress?.totalSec || 0)}
             </p>
 
             <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-slate-800">
@@ -143,7 +164,11 @@ export function ExportModal() {
             </div>
             <h3 className="text-base font-semibold text-white">Video exported successfully!</h3>
             <p className="mt-1 text-xs text-slate-300">
-              Your browser has started downloading the rendered .webm file.
+              {exportMode === "master"
+                ? "Full 1080p Master video (no watermark) downloaded."
+                : exportMode === "trial"
+                ? "1-Minute Free Trial export completed and saved."
+                : "30-second preview clip downloaded."}
             </p>
             <button
               onClick={() => {
@@ -157,7 +182,7 @@ export function ExportModal() {
           </div>
         ) : (
           <div className="relative mt-6 space-y-3">
-            {/* Option 1: Full 1080p Video */}
+            {/* Option 1: Full 1080p Master Video */}
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -165,20 +190,27 @@ export function ExportModal() {
                     <Film className="h-4 w-4" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-white">Full Video (1080p WebM)</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">Full 1080p Master Video</span>
+                      {isUnlocked && (
+                        <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400">
+                          UNLOCKED
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-400">
-                      Entire {formatClock(project.audioDurationSec)} runtime · All scenes &amp; audio
+                      Entire {formatClock(project.audioDurationSec)} runtime · Zero Watermark · 1080p Master
                     </div>
                   </div>
                 </div>
 
                 {isUnlocked ? (
                   <button
-                    onClick={() => handleStartExport(false)}
+                    onClick={() => handleStartExport("master")}
                     className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-500 transition"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    Render Full
+                    Export 1080p
                   </button>
                 ) : (
                   <button
@@ -195,7 +227,54 @@ export function ExportModal() {
               </div>
             </div>
 
-            {/* Option 2: 30s High-Retention Preview Video */}
+            {/* Option 2: One-Time 1-Minute Free Trial Export */}
+            <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4 transition hover:border-indigo-500/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-500/20 text-indigo-300">
+                    <Sparkles className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">1-Minute Free Trial Export</span>
+                      <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">
+                        1 Per Account
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Export first 60 seconds with subtle watermark
+                    </div>
+                  </div>
+                </div>
+
+                {!user ? (
+                  <button
+                    onClick={() => {
+                      close();
+                      openAuthModal();
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/20 px-3 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/30 transition"
+                  >
+                    <UserCheck className="h-3.5 w-3.5" />
+                    Sign In to Claim
+                  </button>
+                ) : hasUsedTrial ? (
+                  <span className="text-[11px] font-medium text-slate-500 border border-slate-800 bg-slate-900 px-2.5 py-1 rounded-md">
+                    Trial Used (1/1)
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleStartExport("trial")}
+                    className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-indigo-500 transition"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Claim 60s
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Option 3: 30s Quick Preview Sample */}
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -204,16 +283,16 @@ export function ExportModal() {
                   </div>
                   <div>
                     <div className="text-sm font-semibold text-white">
-                      30-Second Preview Video
+                      30-Second Quick Sample
                     </div>
                     <div className="text-xs text-slate-400">
-                      Free export · First {PREVIEW_LIMIT_SEC}s with kinetic cuts
+                      Fast draft export · First {PREVIEW_LIMIT_SEC}s with watermark
                     </div>
                   </div>
                 </div>
 
                 <button
-                  onClick={() => handleStartExport(true)}
+                  onClick={() => handleStartExport("preview")}
                   className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition"
                 >
                   <Download className="h-3.5 w-3.5" />
@@ -222,7 +301,7 @@ export function ExportModal() {
               </div>
             </div>
 
-            {/* Option 3: EDL JSON Manifest */}
+            {/* Option 4: EDL JSON Manifest */}
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-slate-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
